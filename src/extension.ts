@@ -24,7 +24,9 @@ export class FactoryLinkProvider implements vscode.DocumentLinkProvider {
 
     // Get factory paths from configuration
     const config = vscode.workspace.getConfiguration("rails-factorybot-jump");
-    const defaultPath = path.posix.join("spec", "factories", "**", "*.rb");
+    const defaultPath = path
+      .join("spec", "factories", "**", "*.rb")
+      .replace(/\\/g, "/");
     const factoryPaths = config.get<string[]>("factoryPaths", [defaultPath]);
 
     // Factory file search patterns
