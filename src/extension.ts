@@ -24,22 +24,28 @@ export class FactoryLinkProvider implements vscode.DocumentLinkProvider {
 
     // Get factory paths from configuration
     const config = vscode.workspace.getConfiguration("rails-factorybot-jump");
-    const defaultPath = path.posix.join("spec", "factories", "**", "*.rb");
+    const defaultPath = path.join("spec", "factories", "**", "*.rb");
     const factoryPaths = config.get<string[]>("factoryPaths", [defaultPath]);
 
-    // Factory file search patterns
-    const patterns = factoryPaths.map(
-      (pathPattern) =>
-        new vscode.RelativePattern(
-          workspaceFolders[0],
-          pathPattern.replace(/\\/g, "/")
-        )
-    );
+    // Clear existing files
+    this.factoryFiles = [];
 
-    // Search for files matching all patterns
+    // Factory file search patterns
+    const patterns = factoryPaths.map((pathPattern) => {
+      // Normalize path separators
+      const normalizedPath = pathPattern.replace(/\\/g, "/");
+      return new vscode.RelativePattern(workspaceFolders[0], normalizedPath);
+    });
+
+    // Search for files matching all patterns in order
     for (const pattern of patterns) {
       const files = await vscode.workspace.findFiles(pattern);
-      this.factoryFiles.push(...files);
+      // Add files in order, avoiding duplicates
+      for (const file of files) {
+        if (!this.factoryFiles.some((f) => f.fsPath === file.fsPath)) {
+          this.factoryFiles.push(file);
+        }
+      }
     }
 
     // Cache factory definitions

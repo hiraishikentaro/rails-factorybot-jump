@@ -58,9 +58,24 @@ suite("Extension Test Suite", () => {
     originalGetConfiguration = vscode.workspace.getConfiguration;
   });
 
-  suiteTeardown(() => {
-    // Clean up temporary directory
-    fs.rmSync(testWorkspacePath, { recursive: true, force: true });
+  suiteTeardown(async () => {
+    // Clean up temporary directory with retry mechanism
+    let retries = 3;
+    while (retries > 0) {
+      try {
+        if (fs.existsSync(testWorkspacePath)) {
+          fs.rmSync(testWorkspacePath, { recursive: true, force: true });
+        }
+        break;
+      } catch (error) {
+        retries--;
+        if (retries === 0) {
+          console.error("Failed to clean up temporary directory:", error);
+        } else {
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+        }
+      }
+    }
     // Reset workspace folders
     Object.defineProperty(vscode.workspace, "workspaceFolders", {
       value: undefined,
@@ -203,7 +218,7 @@ suite("Extension Test Suite", () => {
       value: () => ({
         get: (key: string) => {
           if (key === "factoryPaths") {
-            return [path.posix.join("spec", "factories", "**", "*.rb")];
+            return [path.join("spec", "factories", "**", "*.rb")];
           }
           return undefined;
         },
@@ -236,7 +251,7 @@ suite("Extension Test Suite", () => {
       value: () => ({
         get: (key: string) => {
           if (key === "factoryPaths") {
-            return [path.posix.join("custom", "factories", "**", "*.rb")];
+            return [path.join("custom", "factories", "**", "*.rb")];
           }
           return undefined;
         },
@@ -270,8 +285,8 @@ suite("Extension Test Suite", () => {
         get: (key: string) => {
           if (key === "factoryPaths") {
             return [
-              path.posix.join("spec", "factories", "**", "*.rb"),
-              path.posix.join("custom", "factories", "**", "*.rb"),
+              path.join("spec", "factories", "**", "*.rb"),
+              path.join("custom", "factories", "**", "*.rb"),
             ];
           }
           return undefined;
@@ -280,35 +295,53 @@ suite("Extension Test Suite", () => {
       configurable: true,
     });
 
-    const factoryContent1 = "factory :user do\n  name { 'John' }\nend";
-    const factoryContent2 = "factory :post do\n  title { 'Test' }\nend";
-
-    const factoryFile1 = vscode.Uri.file(
+    // Create factory files in both paths
+    const factoryContent = "factory :user do\n  name { 'John' }\nend";
+    const specFactoryFile = vscode.Uri.file(
       path.join(testWorkspacePath, "spec", "factories", "test_factories.rb")
     );
-    const factoryFile2 = vscode.Uri.file(
+    const customFactoryFile = vscode.Uri.file(
       path.join(testWorkspacePath, "custom", "factories", "test_factories.rb")
     );
 
-    await vscode.workspace.fs.writeFile(
-      factoryFile1,
-      Buffer.from(factoryContent1)
-    );
-    await vscode.workspace.fs.writeFile(
-      factoryFile2,
-      Buffer.from(factoryContent2)
-    );
-
     try {
+      // Create factory files
+      await vscode.workspace.fs.writeFile(
+        specFactoryFile,
+        Buffer.from(factoryContent)
+      );
+      await vscode.workspace.fs.writeFile(
+        customFactoryFile,
+        Buffer.from(factoryContent)
+      );
+
+      // Initialize and verify
       await factoryLinkProvider.initializeFactoryFiles();
       const userFactory = await factoryLinkProvider.findFactoryFile("user");
-      const postFactory = await factoryLinkProvider.findFactoryFile("post");
-
       assert.ok(userFactory, "Should find user factory file in first path");
-      assert.ok(postFactory, "Should find post factory file in second path");
+
+      // Clean up first factory file and verify second path
+      await vscode.workspace.fs.delete(specFactoryFile);
+      factoryLinkProvider = new FactoryLinkProvider();
+      await factoryLinkProvider.initializeFactoryFiles();
+      const userFactoryFromSecondPath =
+        await factoryLinkProvider.findFactoryFile("user");
+      assert.ok(
+        userFactoryFromSecondPath,
+        "Should find user factory file in second path"
+      );
     } finally {
-      await vscode.workspace.fs.delete(factoryFile1);
-      await vscode.workspace.fs.delete(factoryFile2);
+      // Clean up
+      try {
+        await vscode.workspace.fs.delete(specFactoryFile);
+      } catch (error) {
+        // Ignore error if file doesn't exist
+      }
+      try {
+        await vscode.workspace.fs.delete(customFactoryFile);
+      } catch (error) {
+        // Ignore error if file doesn't exist
+      }
     }
   });
 });
