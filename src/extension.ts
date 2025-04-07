@@ -92,9 +92,12 @@ export class FactoryLinkProvider implements vscode.DocumentLinkProvider {
     const links: vscode.DocumentLink[] = [];
     const text = document.getText();
 
-    // Regex pattern to match factory calls: create(:factory_name), create :factory_name, build(:factory_name), build :factory_name
+    // Regex pattern to match factory calls:
+    //   create(:factory_name), create :factory_name,
+    //   build(:factory_name), build :factory_name,
+    //   build_stubbed(:factory_name), build_stubbed :factory_name,
     const factoryRegex =
-      /(?:create|build)\s*(?:\(\s*)?(:[a-zA-Z0-9_]+)(?:\s*(?:,|\)|\n|$)|\s*,\s*[^)]*(?:\)|\n|$))/g;
+      /(?:create|build|build_stubbed)\s*(?:\(\s*)?(:[a-zA-Z0-9_]+)(?:\s*(?:,|\)|\n|$)|\s*,\s*[^)]*(?:\)|\n|$))/g;
     let match;
 
     while ((match = factoryRegex.exec(text)) !== null) {

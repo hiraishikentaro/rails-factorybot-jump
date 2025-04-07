@@ -83,7 +83,7 @@ suite("Extension Test Suite", () => {
 
   test("FactoryLinkProvider should detect factory calls", async () => {
     const document = await vscode.workspace.openTextDocument({
-      content: "create(:user)\nbuild(:post)",
+      content: "create(:user)\nbuild(:post)\nbuild_stubbed(:post)",
       language: "ruby",
     });
 
@@ -97,7 +97,7 @@ suite("Extension Test Suite", () => {
 
   test("FactoryLinkProvider should handle complex factory calls", async () => {
     const document = await vscode.workspace.openTextDocument({
-      content: "create(:user, name: 'John')\nbuild(:post, title: 'Test')",
+      content: "create(:user, name: 'John')\nbuild(:post, title: 'Test')\nbuild_stubbed(:post, title: 'Test')",
       language: "ruby",
     });
 
