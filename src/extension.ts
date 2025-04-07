@@ -36,19 +36,25 @@ export class FactoryLinkProvider implements vscode.DocumentLinkProvider {
         )
     );
 
-    // Search for files matching all patterns
+    // Clear existing cache
+    this.factoryFiles = [];
+    this.factoryCache.clear();
+
+    // Process each pattern in order
     for (const pattern of patterns) {
       const files = await vscode.workspace.findFiles(pattern);
       this.factoryFiles.push(...files);
+      // Cache factory definitions for this pattern immediately
+      await this.cacheFactoryDefinitions(files);
     }
 
-    // Cache factory definitions
-    await this.cacheFactoryDefinitions();
     this.isInitialized = true;
   }
 
-  private async cacheFactoryDefinitions() {
-    for (const file of this.factoryFiles) {
+  private async cacheFactoryDefinitions(
+    files: vscode.Uri[] = this.factoryFiles
+  ) {
+    for (const file of files) {
       const content = await vscode.workspace.fs.readFile(file);
       const text = new TextDecoder().decode(content);
 
@@ -58,14 +64,17 @@ export class FactoryLinkProvider implements vscode.DocumentLinkProvider {
 
       while ((match = factoryRegex.exec(text)) !== null) {
         const factoryName = match[1];
-        // Calculate line number of factory definition
-        const lines = text.substring(0, match.index).split("\n");
-        const lineNumber = lines.length - 1;
-        // Cache file and line number
-        this.factoryCache.set(factoryName, {
-          uri: file,
-          lineNumber: lineNumber,
-        });
+        // Only cache if not already cached (first definition takes precedence)
+        if (!this.factoryCache.has(factoryName)) {
+          // Calculate line number of factory definition
+          const lines = text.substring(0, match.index).split("\n");
+          const lineNumber = lines.length - 1;
+          // Cache file and line number
+          this.factoryCache.set(factoryName, {
+            uri: file,
+            lineNumber: lineNumber,
+          });
+        }
       }
     }
   }
@@ -83,11 +92,11 @@ export class FactoryLinkProvider implements vscode.DocumentLinkProvider {
 
     // Regex pattern to match factory calls: create(:factory_name), create :factory_name, build(:factory_name), build :factory_name
     const factoryRegex =
-      /(?:create|build)\s*(?:\(\s*)?(:([a-zA-Z0-9_]+))(?:\s*,\s*[^)]*)?/g;
+      /(?:create|build)\s*(?:\(\s*)?(:[a-zA-Z0-9_]+)(?:\s*(?:,|\)|\n|$)|\s*,\s*[^)]*(?:\)|\n|$))/g;
     let match;
 
     while ((match = factoryRegex.exec(text)) !== null) {
-      const factoryName = match[2];
+      const factoryName = match[1].substring(1); // Remove the : prefix
       // Calculate range for just the :factory_name part
       const factoryNameStart = match.index + match[0].indexOf(match[1]);
       const factoryNameEnd = factoryNameStart + match[1].length;

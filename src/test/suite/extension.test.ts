@@ -311,4 +311,73 @@ suite("Extension Test Suite", () => {
       await vscode.workspace.fs.delete(factoryFile2);
     }
   });
+
+  test("FactoryLinkProvider should handle consecutive create/build calls with and without parentheses", async () => {
+    // Create a temporary factory file
+    const factoryContent = `
+      factory :user do
+        name { 'John' }
+      end
+
+      factory :post do
+        title { 'Test' }
+      end
+
+      factory :join do
+        status { :status_active }
+      end
+    `;
+
+    const factoryFile = vscode.Uri.file(
+      path.join(testWorkspacePath, "spec", "factories", "test_factories.rb")
+    );
+
+    await vscode.workspace.fs.writeFile(
+      factoryFile,
+      Buffer.from(factoryContent)
+    );
+
+    try {
+      await factoryLinkProvider.initializeFactoryFiles();
+
+      // Test document with various combinations of create/build calls
+      const document = await vscode.workspace.openTextDocument({
+        content: `
+          create :user
+          create :post
+          build(:user)
+          build(:post)
+          create :user
+          build :post
+
+          before do
+            if idx.even?
+              create :join,
+            else
+              create :join, status: :status_inactive
+            end
+          end
+        `,
+        language: "ruby",
+      });
+
+      const links = await factoryLinkProvider.provideDocumentLinks(document);
+      assert.strictEqual(links.length, 8, "Should detect all factory calls");
+
+      // Verify that all factory names are properly detected
+      const factoryNames = links.map((link) => {
+        const range = link.range;
+        return document.getText(range).slice(1); // Remove the : prefix
+      });
+
+      assert.deepStrictEqual(
+        factoryNames,
+        ["user", "post", "user", "post", "user", "post", "join", "join"],
+        "Should detect all factory names in correct order"
+      );
+    } finally {
+      // Clean up
+      await vscode.workspace.fs.delete(factoryFile);
+    }
+  });
 });
