@@ -58,9 +58,24 @@ suite("Extension Test Suite", () => {
     originalGetConfiguration = vscode.workspace.getConfiguration;
   });
 
-  suiteTeardown(() => {
-    // Clean up temporary directory
-    fs.rmSync(testWorkspacePath, { recursive: true, force: true });
+  suiteTeardown(async () => {
+    // Clean up temporary directory with retry mechanism
+    let retries = 3;
+    while (retries > 0) {
+      try {
+        if (fs.existsSync(testWorkspacePath)) {
+          fs.rmSync(testWorkspacePath, { recursive: true, force: true });
+        }
+        break;
+      } catch (error) {
+        retries--;
+        if (retries === 0) {
+          console.error("Failed to clean up temporary directory:", error);
+        } else {
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+        }
+      }
+    }
     // Reset workspace folders
     Object.defineProperty(vscode.workspace, "workspaceFolders", {
       value: undefined,
@@ -203,7 +218,7 @@ suite("Extension Test Suite", () => {
       value: () => ({
         get: (key: string) => {
           if (key === "factoryPaths") {
-            return [path.posix.join("spec", "factories", "**", "*.rb")];
+            return [path.join("spec", "factories", "**", "*.rb")];
           }
           return undefined;
         },
@@ -236,7 +251,7 @@ suite("Extension Test Suite", () => {
       value: () => ({
         get: (key: string) => {
           if (key === "factoryPaths") {
-            return [path.posix.join("custom", "factories", "**", "*.rb")];
+            return [path.join("custom", "factories", "**", "*.rb")];
           }
           return undefined;
         },
@@ -270,8 +285,8 @@ suite("Extension Test Suite", () => {
         get: (key: string) => {
           if (key === "factoryPaths") {
             return [
-              path.posix.join("spec", "factories", "**", "*.rb"),
-              path.posix.join("custom", "factories", "**", "*.rb"),
+              path.join("spec", "factories", "**", "*.rb"),
+              path.join("custom", "factories", "**", "*.rb"),
             ];
           }
           return undefined;
