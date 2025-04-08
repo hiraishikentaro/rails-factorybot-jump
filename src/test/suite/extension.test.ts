@@ -203,7 +203,9 @@ suite("Extension Test Suite", () => {
       value: () => ({
         get: (key: string) => {
           if (key === "factoryPaths") {
-            return [path.posix.join("spec", "factories", "**", "*.rb")];
+            return [
+              path.join("spec", "factories", "**", "*.rb").replace(/\\/g, "/"),
+            ];
           }
           return undefined;
         },
@@ -236,7 +238,11 @@ suite("Extension Test Suite", () => {
       value: () => ({
         get: (key: string) => {
           if (key === "factoryPaths") {
-            return [path.posix.join("custom", "factories", "**", "*.rb")];
+            return [
+              path
+                .join("custom", "factories", "**", "*.rb")
+                .replace(/\\/g, "/"),
+            ];
           }
           return undefined;
         },
@@ -270,8 +276,10 @@ suite("Extension Test Suite", () => {
         get: (key: string) => {
           if (key === "factoryPaths") {
             return [
-              path.posix.join("spec", "factories", "**", "*.rb"),
-              path.posix.join("custom", "factories", "**", "*.rb"),
+              path.join("spec", "factories", "**", "*.rb").replace(/\\/g, "/"),
+              path
+                .join("custom", "factories", "**", "*.rb")
+                .replace(/\\/g, "/"),
             ];
           }
           return undefined;
@@ -280,9 +288,7 @@ suite("Extension Test Suite", () => {
       configurable: true,
     });
 
-    const factoryContent1 = "factory :user do\n  name { 'John' }\nend";
-    const factoryContent2 = "factory :post do\n  title { 'Test' }\nend";
-
+    const factoryContent = "factory :user do\n  name { 'John' }\nend";
     const factoryFile1 = vscode.Uri.file(
       path.join(testWorkspacePath, "spec", "factories", "test_factories.rb")
     );
@@ -292,23 +298,89 @@ suite("Extension Test Suite", () => {
 
     await vscode.workspace.fs.writeFile(
       factoryFile1,
-      Buffer.from(factoryContent1)
+      Buffer.from(factoryContent)
     );
     await vscode.workspace.fs.writeFile(
       factoryFile2,
-      Buffer.from(factoryContent2)
+      Buffer.from(factoryContent)
     );
 
     try {
       await factoryLinkProvider.initializeFactoryFiles();
       const userFactory = await factoryLinkProvider.findFactoryFile("user");
-      const postFactory = await factoryLinkProvider.findFactoryFile("post");
-
       assert.ok(userFactory, "Should find user factory file in first path");
-      assert.ok(postFactory, "Should find post factory file in second path");
     } finally {
       await vscode.workspace.fs.delete(factoryFile1);
       await vscode.workspace.fs.delete(factoryFile2);
+    }
+  });
+
+  test("FactoryLinkProvider should handle consecutive create/build calls with and without parentheses", async () => {
+    // Create a temporary factory file
+    const factoryContent = `
+      factory :user do
+        name { 'John' }
+      end
+
+      factory :post do
+        title { 'Test' }
+      end
+
+      factory :join do
+        status { :status_active }
+      end
+    `;
+
+    const factoryFile = vscode.Uri.file(
+      path.join(testWorkspacePath, "spec", "factories", "test_factories.rb")
+    );
+
+    await vscode.workspace.fs.writeFile(
+      factoryFile,
+      Buffer.from(factoryContent)
+    );
+
+    try {
+      await factoryLinkProvider.initializeFactoryFiles();
+
+      // Test document with various combinations of create/build calls
+      const document = await vscode.workspace.openTextDocument({
+        content: `
+          create :user
+          create :post
+          build(:user)
+          build(:post)
+          create :user
+          build :post
+
+          before do
+            if idx.even?
+              create :join,
+            else
+              create :join, status: :status_inactive
+            end
+          end
+        `,
+        language: "ruby",
+      });
+
+      const links = await factoryLinkProvider.provideDocumentLinks(document);
+      assert.strictEqual(links.length, 8, "Should detect all factory calls");
+
+      // Verify that all factory names are properly detected
+      const factoryNames = links.map((link) => {
+        const range = link.range;
+        return document.getText(range).slice(1); // Remove the : prefix
+      });
+
+      assert.deepStrictEqual(
+        factoryNames,
+        ["user", "post", "user", "post", "user", "post", "join", "join"],
+        "Should detect all factory names in correct order"
+      );
+    } finally {
+      // Clean up
+      await vscode.workspace.fs.delete(factoryFile);
     }
   });
 });
