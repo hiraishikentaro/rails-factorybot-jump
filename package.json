@@ -2,7 +2,7 @@
   "name": "rails-factorybot-jump",
   "displayName": "Rails FactoryBot Jump",
   "description": "Jump to FactoryBot factory definition from Rails test files",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "icon": "images/icon.png",
   "publisher": "hir4ken",
   "engines": {

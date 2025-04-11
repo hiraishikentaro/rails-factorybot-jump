@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2024-04-11
+
+### Added
+
+- Support for detecting `build_stubbed`, `build_stubbed_list`, `create_list`, `build_list` factory calls
+- Improved factory call detection for consecutive calls
+
+### Changed
+
+- Refactored FactoryLinkProvider for better code organization
+- Updated GitHub Actions workflow to use Node.js 22.x
+
+### Fixed
+
+- Enhanced factory call detection with comprehensive test coverage
+
 ## [1.1.0] - 2025-04-07
 
 ### Added
