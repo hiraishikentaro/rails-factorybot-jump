@@ -1,6 +1,6 @@
 import * as assert from "assert";
 import * as vscode from "vscode";
-import { FactoryLinkProvider } from "../../extension";
+import { FactoryLinkProvider } from "../../providers/factoryLinkProvider";
 import * as path from "path";
 import * as os from "os";
 import * as fs from "fs";
@@ -97,7 +97,8 @@ suite("Extension Test Suite", () => {
 
   test("FactoryLinkProvider should handle complex factory calls", async () => {
     const document = await vscode.workspace.openTextDocument({
-      content: "create(:user, name: 'John')\nbuild(:post, title: 'Test')\nbuild_stubbed(:post, title: 'Test')",
+      content:
+        "create(:user, name: 'John')\nbuild(:post, title: 'Test')\nbuild_stubbed(:post, title: 'Test')",
       language: "ruby",
     });
 
@@ -352,6 +353,10 @@ suite("Extension Test Suite", () => {
           build(:post)
           create :user
           build :post
+          create_list(:user, 1)
+          build_list(:post, 1)
+          build_stubbed(:post)
+          build_stubbed_list(:user, 1)
 
           before do
             if idx.even?
@@ -365,7 +370,7 @@ suite("Extension Test Suite", () => {
       });
 
       const links = await factoryLinkProvider.provideDocumentLinks(document);
-      assert.strictEqual(links.length, 8, "Should detect all factory calls");
+      assert.strictEqual(links.length, 12, "Should detect all factory calls");
 
       // Verify that all factory names are properly detected
       const factoryNames = links.map((link) => {
@@ -375,7 +380,20 @@ suite("Extension Test Suite", () => {
 
       assert.deepStrictEqual(
         factoryNames,
-        ["user", "post", "user", "post", "user", "post", "join", "join"],
+        [
+          "user",
+          "post",
+          "user",
+          "post",
+          "user",
+          "post",
+          "user",
+          "post",
+          "post",
+          "user",
+          "join",
+          "join",
+        ],
         "Should detect all factory names in correct order"
       );
     } finally {
