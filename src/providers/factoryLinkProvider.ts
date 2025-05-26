@@ -4,8 +4,10 @@ import * as path from "path";
 class FactoryLinkProvider implements vscode.DocumentLinkProvider {
   private factoryCache: Map<string, { uri: vscode.Uri; lineNumber: number }> =
     new Map();
-  private traitCache: Map<string, { uri: vscode.Uri; lineNumber: number; factoryName: string }> =
-    new Map();
+  private traitCache: Map<
+    string,
+    { uri: vscode.Uri; lineNumber: number; factoryName: string }
+  > = new Map();
   private factoryFiles: vscode.Uri[] = [];
   private isInitialized = false;
 
@@ -89,7 +91,8 @@ class FactoryLinkProvider implements vscode.DocumentLinkProvider {
 
   private cacheTraitDefinitions(file: vscode.Uri, text: string) {
     // Find factory blocks first to get context for traits
-    const factoryBlockRegex = /factory\s+:([a-zA-Z0-9_]+)\s+do([\s\S]*?)(?=\n\s*(?:factory|end\s*$))/g;
+    const factoryBlockRegex =
+      /factory\s+:([a-zA-Z0-9_]+)\s+do([\s\S]*?)(?=\n\s*(?:factory|end\s*$))/g;
     let factoryMatch;
 
     while ((factoryMatch = factoryBlockRegex.exec(text)) !== null) {
@@ -104,14 +107,14 @@ class FactoryLinkProvider implements vscode.DocumentLinkProvider {
       while ((traitMatch = traitRegex.exec(factoryBlock)) !== null) {
         const traitName = traitMatch[1];
         const traitKey = `${factoryName}:${traitName}`;
-        
+
         // Only cache if not already cached (first definition takes precedence)
         if (!this.traitCache.has(traitKey)) {
           // Calculate absolute position of trait definition
           const traitIndex = factoryStartIndex + traitMatch.index;
           const lines = text.substring(0, traitIndex).split("\n");
           const lineNumber = lines.length - 1;
-          
+
           // Cache trait with factory context
           this.traitCache.set(traitKey, {
             uri: file,
@@ -136,7 +139,7 @@ class FactoryLinkProvider implements vscode.DocumentLinkProvider {
 
     // Regex pattern to match factory calls with traits:
     //   create(:factory_name, :trait1, :trait2, options)
-    //   build(:factory_name, :trait1, :trait2, options) 
+    //   build(:factory_name, :trait1, :trait2, options)
     //   etc.
     const factoryCallRegex =
       /(?:create|create_list|build|build_list|build_stubbed|build_stubbed_list)\s*(?:\(\s*)?((:[a-zA-Z0-9_]+)(?:\s*,\s*(:[a-zA-Z0-9_]+))*)\s*(?:,\s*[^)]*)?(?:\)|\n|$)/g;
@@ -145,7 +148,7 @@ class FactoryLinkProvider implements vscode.DocumentLinkProvider {
     while ((match = factoryCallRegex.exec(text)) !== null) {
       const fullMatch = match[1]; // The part with factory name and traits
       const factoryName = match[2].substring(1); // Remove the : prefix from factory name
-      
+
       // Create link for factory name
       const factoryNameMatch = match[2];
       const factoryNameStart = match.index + match[0].indexOf(factoryNameMatch);
@@ -177,16 +180,17 @@ class FactoryLinkProvider implements vscode.DocumentLinkProvider {
       const traitRegex = /:([a-zA-Z0-9_]+)/g;
       let traitMatch;
       traitRegex.lastIndex = 0; // Reset regex
-      
+
       // Skip the first match (factory name)
       traitRegex.exec(fullMatch);
-      
+
       while ((traitMatch = traitRegex.exec(fullMatch)) !== null) {
         const traitName = traitMatch[1];
         const traitKey = `${factoryName}:${traitName}`;
-        
+
         // Calculate absolute position of trait symbol
-        const traitSymbolStart = match.index + match[0].indexOf(fullMatch) + traitMatch.index;
+        const traitSymbolStart =
+          match.index + match[0].indexOf(fullMatch) + traitMatch.index;
         const traitSymbolEnd = traitSymbolStart + traitMatch[0].length;
         const traitRange = new vscode.Range(
           document.positionAt(traitSymbolStart),
