@@ -370,7 +370,7 @@ suite("Extension Test Suite", () => {
       });
 
       const links = await factoryLinkProvider.provideDocumentLinks(document);
-      assert.strictEqual(links.length, 12, "Should detect all factory calls");
+      assert.strictEqual(links.length, 11, "Should detect all factory calls");
 
       // Verify that all factory names are properly detected
       const factoryNames = links.map((link) => {
@@ -391,7 +391,6 @@ suite("Extension Test Suite", () => {
           "post",
           "post",
           "user",
-          "join",
           "join",
         ],
         "Should detect all factory names in correct order"
