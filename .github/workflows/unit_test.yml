@@ -30,12 +30,12 @@ jobs:
 
       - name: Run tests (Linux)
         if: runner.os == 'Linux'
-        run: xvfb-run -a npm test
+        run: xvfb-run -a npm test:unit
         env:
           CI: true
 
       - name: Run tests (macOS and Windows)
         if: runner.os != 'Linux'
-        run: npm test
+        run: npm test:unit
         env:
           CI: true
