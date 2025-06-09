@@ -3,6 +3,7 @@
  */
 
 import * as vscode from "vscode";
+import * as path from "path";
 
 /**
  * ファイル内の位置情報を表現するクラス
@@ -57,7 +58,7 @@ export class Location {
    * 位置情報の文字列表現を取得
    */
   public toString(): string {
-    const fileName = this.uri.fsPath.split("/").pop() || this.uri.fsPath;
+    const fileName = path.basename(this.uri.fsPath);
     return `${fileName}:${this.line + 1}:${(this.column || 0) + 1}`;
   }
 
