@@ -4,6 +4,10 @@ import { FileSearcher } from "../services/fileSearcher";
 import { FactoryParser } from "../services/factoryParser";
 import { CacheManager } from "../services/cacheManager";
 import {
+  ErrorNotificationService,
+  ErrorLevel,
+} from "../services/errorNotificationService";
+import {
   getFactoryCallPattern,
   TRAIT_REFERENCE_PATTERN,
 } from "../utils/regexPatterns";
@@ -18,19 +22,28 @@ class FactoryLinkProvider implements vscode.DocumentLinkProvider {
   private fileSearcher: FileSearcher;
   private factoryParser: FactoryParser;
   private cacheManager: CacheManager;
+  private errorNotificationService: ErrorNotificationService;
   private disposables: vscode.Disposable[] = [];
 
   constructor() {
-    // 各サービスを初期化
+    // エラー通知サービスを最初に初期化
+    this.errorNotificationService = new ErrorNotificationService();
+
+    // 各サービスを初期化（エラー通知サービスを依存注入）
     this.configurationManager = new ConfigurationManager();
-    this.fileSearcher = new FileSearcher();
-    this.factoryParser = new FactoryParser();
+    this.fileSearcher = new FileSearcher(this.errorNotificationService);
+    this.factoryParser = new FactoryParser(this.errorNotificationService);
     this.cacheManager = new CacheManager();
 
     // 設定変更時の処理を登録
     this.configurationManager.onConfigurationChange(() => {
       this.handleConfigurationChange();
     });
+
+    // デバッグモードの初期設定
+    this.errorNotificationService.setDebugMode(
+      this.configurationManager.isDebugMode()
+    );
 
     // ファイル変更時の処理を登録
     this.fileSearcher.onFileChange((uri) => {
@@ -82,7 +95,16 @@ class FactoryLinkProvider implements vscode.DocumentLinkProvider {
         );
       }
     } catch (error) {
-      console.error("Failed to initialize factory files:", error);
+      await this.errorNotificationService.logError({
+        level: ErrorLevel.ERROR,
+        context: "Factory Initialization",
+        message: "Failed to initialize factory files",
+        error: error as Error,
+        userMessage:
+          "Failed to initialize factory files. Some factory links may not work correctly.",
+        showToUser: true,
+        retry: () => this.initializeFactoryFiles(),
+      });
     }
   }
 
@@ -111,6 +133,11 @@ class FactoryLinkProvider implements vscode.DocumentLinkProvider {
    * 設定変更時の処理
    */
   private handleConfigurationChange(): void {
+    // デバッグモードの同期
+    this.errorNotificationService.setDebugMode(
+      this.configurationManager.isDebugMode()
+    );
+
     if (this.configurationManager.isDebugMode()) {
       console.log("Configuration changed, reinitializing factory files");
     }
@@ -157,91 +184,130 @@ class FactoryLinkProvider implements vscode.DocumentLinkProvider {
       return [];
     }
 
-    const links: vscode.DocumentLink[] = [];
-    const text = document.getText();
+    try {
+      const links: vscode.DocumentLink[] = [];
+      const text = document.getText();
 
-    // ファクトリ呼び出しを検出
-    const factoryCallRegex = getFactoryCallPattern();
-    let match;
-
-    while ((match = factoryCallRegex.exec(text)) !== null) {
-      const fullMatch = match[1]; // ファクトリ名とトレイトの部分
-      const factoryName = match[2].substring(1); // :プレフィックスを除去
-
-      // ファクトリ名のリンクを作成
-      const factoryNameMatch = match[2];
-      const factoryNameStart = match.index + match[0].indexOf(factoryNameMatch);
-      const factoryNameEnd = factoryNameStart + factoryNameMatch.length;
-      const factoryRange = new vscode.Range(
-        document.positionAt(factoryNameStart),
-        document.positionAt(factoryNameEnd)
-      );
-
-      // キャッシュからファクトリ情報を取得
-      const factoryInfo = this.cacheManager.getFactoryFileLocation(factoryName);
-      if (factoryInfo) {
-        const factoryLink = new vscode.DocumentLink(
-          factoryRange,
-          vscode.Uri.parse(
-            `command:rails-factorybot-jump.gotoLine?${encodeURIComponent(
-              JSON.stringify({
-                uri: factoryInfo.uri.toString(),
-                lineNumber: factoryInfo.lineNumber,
-              })
-            )}`
-          )
+      // ファクトリ呼び出しを検出
+      let factoryCallRegex;
+      try {
+        factoryCallRegex = getFactoryCallPattern();
+      } catch (error) {
+        await this.errorNotificationService.handleRegexError(
+          "factory call pattern",
+          error as Error,
+          `Factory Call Pattern - ${document.uri.fsPath}`
         );
-        factoryLink.tooltip = `Hold Cmd (Mac) or Ctrl (Windows) and click to jump to factory definition: ${factoryName}`;
-        links.push(factoryLink);
+        return [];
       }
 
-      // トレイトのリンクを検索・作成
-      const traitRegex = new RegExp(
-        TRAIT_REFERENCE_PATTERN.source,
-        TRAIT_REFERENCE_PATTERN.flags
-      );
-      let traitMatch;
-      traitRegex.lastIndex = 0; // リセット
+      let match;
+      while ((match = factoryCallRegex.exec(text)) !== null) {
+        const fullMatch = match[1]; // ファクトリ名とトレイトの部分
+        const factoryName = match[2].substring(1); // :プレフィックスを除去
 
-      // 最初のマッチ（ファクトリ名）をスキップ
-      traitRegex.exec(fullMatch);
-
-      while ((traitMatch = traitRegex.exec(fullMatch)) !== null) {
-        const traitName = traitMatch[1];
-
-        // トレイトシンボルの絶対位置を計算
-        const traitSymbolStart =
-          match.index + match[0].indexOf(fullMatch) + traitMatch.index;
-        const traitSymbolEnd = traitSymbolStart + traitMatch[0].length;
-        const traitRange = new vscode.Range(
-          document.positionAt(traitSymbolStart),
-          document.positionAt(traitSymbolEnd)
+        // ファクトリ名のリンクを作成
+        const factoryNameMatch = match[2];
+        const factoryNameStart =
+          match.index + match[0].indexOf(factoryNameMatch);
+        const factoryNameEnd = factoryNameStart + factoryNameMatch.length;
+        const factoryRange = new vscode.Range(
+          document.positionAt(factoryNameStart),
+          document.positionAt(factoryNameEnd)
         );
 
-        // キャッシュからトレイト情報を取得
-        const traitInfo = this.cacheManager.getTraitLocation(
-          factoryName,
-          traitName
-        );
-        if (traitInfo) {
-          const traitLink = new vscode.DocumentLink(
-            traitRange,
+        // キャッシュからファクトリ情報を取得
+        const factoryInfo =
+          this.cacheManager.getFactoryFileLocation(factoryName);
+        if (factoryInfo) {
+          const factoryLink = new vscode.DocumentLink(
+            factoryRange,
             vscode.Uri.parse(
               `command:rails-factorybot-jump.gotoLine?${encodeURIComponent(
                 JSON.stringify({
-                  uri: traitInfo.uri.toString(),
-                  lineNumber: traitInfo.lineNumber,
+                  uri: factoryInfo.uri.toString(),
+                  lineNumber: factoryInfo.lineNumber,
                 })
               )}`
             )
           );
-          traitLink.tooltip = `Hold Cmd (Mac) or Ctrl (Windows) and click to jump to trait definition: ${traitName} in factory ${factoryName}`;
-          links.push(traitLink);
+          factoryLink.tooltip = `Hold Cmd (Mac) or Ctrl (Windows) and click to jump to factory definition: ${factoryName}`;
+          links.push(factoryLink);
+        }
+
+        // トレイトのリンクを検索・作成
+        let traitRegex;
+        try {
+          traitRegex = new RegExp(
+            TRAIT_REFERENCE_PATTERN.source,
+            TRAIT_REFERENCE_PATTERN.flags
+          );
+        } catch (error) {
+          await this.errorNotificationService.handleRegexError(
+            TRAIT_REFERENCE_PATTERN.source,
+            error as Error,
+            `Trait Reference Pattern - ${document.uri.fsPath}`
+          );
+          continue; // この factory の処理をスキップして次へ
+        }
+        let traitMatch;
+        traitRegex.lastIndex = 0; // リセット
+
+        // 最初のマッチ（ファクトリ名）をスキップ
+        traitRegex.exec(fullMatch);
+
+        while ((traitMatch = traitRegex.exec(fullMatch)) !== null) {
+          const traitName = traitMatch[1];
+
+          // トレイトシンボルの絶対位置を計算
+          const traitSymbolStart =
+            match.index + match[0].indexOf(fullMatch) + traitMatch.index;
+          const traitSymbolEnd = traitSymbolStart + traitMatch[0].length;
+          const traitRange = new vscode.Range(
+            document.positionAt(traitSymbolStart),
+            document.positionAt(traitSymbolEnd)
+          );
+
+          // キャッシュからトレイト情報を取得
+          const traitInfo = this.cacheManager.getTraitLocation(
+            factoryName,
+            traitName
+          );
+          if (traitInfo) {
+            const traitLink = new vscode.DocumentLink(
+              traitRange,
+              vscode.Uri.parse(
+                `command:rails-factorybot-jump.gotoLine?${encodeURIComponent(
+                  JSON.stringify({
+                    uri: traitInfo.uri.toString(),
+                    lineNumber: traitInfo.lineNumber,
+                  })
+                )}`
+              )
+            );
+            traitLink.tooltip = `Hold Cmd (Mac) or Ctrl (Windows) and click to jump to trait definition: ${traitName} in factory ${factoryName}`;
+            links.push(traitLink);
+          }
         }
       }
-    }
 
-    return links;
+      return links;
+    } catch (error) {
+      await this.errorNotificationService.logError({
+        level: ErrorLevel.ERROR,
+        context: "Document Link Generation",
+        message: "Failed to generate document links",
+        error: error as Error,
+        showToUser: false,
+        additionalInfo: {
+          documentUri: document.uri.toString(),
+          languageId: document.languageId,
+        },
+      });
+
+      // エラーが発生した場合は空配列を返す
+      return [];
+    }
   }
 
   /**
@@ -264,6 +330,7 @@ class FactoryLinkProvider implements vscode.DocumentLinkProvider {
   public dispose(): void {
     this.configurationManager.dispose();
     this.fileSearcher.dispose();
+    this.errorNotificationService.dispose();
     this.disposables.forEach((disposable) => disposable.dispose());
     this.disposables = [];
   }
