@@ -1,153 +1,174 @@
 import * as vscode from "vscode";
-import * as path from "path";
+import { ConfigurationManager } from "../services/configurationManager";
+import { FileSearcher } from "../services/fileSearcher";
+import { FactoryParser } from "../services/factoryParser";
+import { CacheManager } from "../services/cacheManager";
+import {
+  getFactoryCallPattern,
+  TRAIT_REFERENCE_PATTERN,
+} from "../utils/regexPatterns";
+import { FACTORY_FILE_PRIORITY_ORDER } from "../constants/defaults";
 
+/**
+ * VSCode DocumentLinkProvider の実装
+ * 新しいアーキテクチャに基づいて各サービスを利用してリンクを生成
+ */
 class FactoryLinkProvider implements vscode.DocumentLinkProvider {
-  private factoryCache: Map<string, { uri: vscode.Uri; lineNumber: number }> =
-    new Map();
-  private traitCache: Map<
-    string,
-    { uri: vscode.Uri; lineNumber: number; factoryName: string }
-  > = new Map();
-  private factoryFiles: vscode.Uri[] = [];
-  private isInitialized = false;
+  private configurationManager: ConfigurationManager;
+  private fileSearcher: FileSearcher;
+  private factoryParser: FactoryParser;
+  private cacheManager: CacheManager;
+  private disposables: vscode.Disposable[] = [];
 
   constructor() {
-    // Initialize lazily
+    // 各サービスを初期化
+    this.configurationManager = new ConfigurationManager();
+    this.fileSearcher = new FileSearcher();
+    this.factoryParser = new FactoryParser();
+    this.cacheManager = new CacheManager();
+
+    // 設定変更時の処理を登録
+    this.configurationManager.onConfigurationChange(() => {
+      this.handleConfigurationChange();
+    });
+
+    // ファイル変更時の処理を登録
+    this.fileSearcher.onFileChange((uri) => {
+      this.handleFileChange(uri);
+    });
+
+    // 自動初期化が有効な場合は初期化を実行
+    if (this.configurationManager.isAutoInitializeEnabled()) {
+      this.initializeFactoryFiles();
+    }
+  }
+
+  /**
+   * ファクトリファイルの初期化
+   */
+  async initializeFactoryFiles(): Promise<void> {
+    if (this.cacheManager.getIsInitialized()) {
+      return;
+    }
+
+    try {
+      // 設定からファクトリパスを取得
+      const factoryPaths = this.configurationManager.getFactoryPaths();
+
+      // ファクトリファイルを検索
+      const factoryFiles = await this.fileSearcher.searchFactoryFiles(
+        factoryPaths
+      );
+
+      // 優先順位でソート
+      const sortedFiles = this.fileSearcher.sortFilesByPriority(
+        factoryFiles,
+        FACTORY_FILE_PRIORITY_ORDER
+      );
+
+      // すべてのキャッシュをクリア
+      this.cacheManager.clearAll();
+
+      // ファイルを解析してキャッシュに追加
+      await this.parseAndCacheFiles(sortedFiles);
+
+      // 初期化完了を設定
+      this.cacheManager.setInitialized(true);
+
+      if (this.configurationManager.isDebugMode()) {
+        const stats = this.cacheManager.getCacheStats();
+        console.log(
+          `Factory initialization completed: ${stats.factoryCount} factories, ${stats.traitCount} traits`
+        );
+      }
+    } catch (error) {
+      console.error("Failed to initialize factory files:", error);
+    }
+  }
+
+  /**
+   * ファイルを解析してキャッシュに追加
+   */
+  private async parseAndCacheFiles(files: vscode.Uri[]): Promise<void> {
+    // 解析結果を取得
+    const parseResult = await this.factoryParser.parseMultipleFiles(files);
+
+    // キャッシュに追加（先に見つかったファクトリが優先される）
+    parseResult.factories.forEach((factory) => {
+      if (!this.cacheManager.getFactory(factory.name)) {
+        this.cacheManager.cacheFactory(factory);
+      }
+    });
+
+    parseResult.traits.forEach((trait) => {
+      if (!this.cacheManager.getTrait(trait.factoryName, trait.name)) {
+        this.cacheManager.cacheTrait(trait);
+      }
+    });
+  }
+
+  /**
+   * 設定変更時の処理
+   */
+  private handleConfigurationChange(): void {
+    if (this.configurationManager.isDebugMode()) {
+      console.log("Configuration changed, reinitializing factory files");
+    }
+
+    // キャッシュタイムアウトを更新
+    const cacheTimeout = this.configurationManager.getCacheTimeout() * 1000; // 秒をミリ秒に変換
+    this.cacheManager.setCacheTimeout(cacheTimeout);
+
+    // 再初期化
+    this.cacheManager.setInitialized(false);
     this.initializeFactoryFiles();
   }
 
-  async initializeFactoryFiles() {
-    if (this.isInitialized) {
-      return;
+  /**
+   * ファイル変更時の処理
+   */
+  private async handleFileChange(uri: vscode.Uri): Promise<void> {
+    if (this.configurationManager.isDebugMode()) {
+      console.log(`Factory file changed: ${uri.fsPath}`);
     }
 
-    const workspaceFolders = vscode.workspace.workspaceFolders;
-    if (!workspaceFolders) {
-      return;
-    }
+    // 変更されたファイルを再解析
+    const parseResult = await this.factoryParser.parseFile(uri);
 
-    // Get factory paths from configuration
-    const config = vscode.workspace.getConfiguration("rails-factorybot-jump");
-    const defaultPath = path.posix.join("spec", "factories", "**", "*.rb");
-    const factoryPaths = config.get<string[]>("factoryPaths", [defaultPath]);
+    // 既存のキャッシュから該当ファクトリを削除して再キャッシュ
+    parseResult.factories.forEach((factory) => {
+      this.cacheManager.removeFactory(factory.name);
+      this.cacheManager.cacheFactory(factory);
+    });
 
-    // Factory file search patterns
-    const patterns = factoryPaths.map(
-      (pathPattern) =>
-        new vscode.RelativePattern(
-          workspaceFolders[0],
-          pathPattern.replace(/\\/g, "/")
-        )
-    );
-
-    // Clear existing cache
-    this.factoryFiles = [];
-    this.factoryCache.clear();
-    this.traitCache.clear();
-
-    // Process each pattern in order
-    for (const pattern of patterns) {
-      const files = await vscode.workspace.findFiles(pattern);
-      this.factoryFiles.push(...files);
-      // Cache factory definitions for this pattern immediately
-      await this.cacheFactoryDefinitions(files);
-    }
-
-    this.isInitialized = true;
+    parseResult.traits.forEach((trait) => {
+      this.cacheManager.cacheTrait(trait);
+    });
   }
 
-  private async cacheFactoryDefinitions(
-    files: vscode.Uri[] = this.factoryFiles
-  ) {
-    for (const file of files) {
-      const content = await vscode.workspace.fs.readFile(file);
-      const text = new TextDecoder().decode(content);
-
-      // Search for factory definitions
-      const factoryRegex = /factory\s+:([a-zA-Z0-9_]+)\b/g;
-      let match;
-
-      while ((match = factoryRegex.exec(text)) !== null) {
-        const factoryName = match[1];
-        // Only cache if not already cached (first definition takes precedence)
-        if (!this.factoryCache.has(factoryName)) {
-          // Calculate line number of factory definition
-          const lines = text.substring(0, match.index).split("\n");
-          const lineNumber = lines.length - 1;
-          // Cache file and line number
-          this.factoryCache.set(factoryName, {
-            uri: file,
-            lineNumber: lineNumber,
-          });
-        }
-      }
-
-      // Search for trait definitions within factories
-      this.cacheTraitDefinitions(file, text);
-    }
-  }
-
-  private cacheTraitDefinitions(file: vscode.Uri, text: string) {
-    // Find factory blocks first to get context for traits
-    const factoryBlockRegex =
-      /factory\s+:([a-zA-Z0-9_]+)\s+do([\s\S]*?)(?=\n\s*(?:factory|end\s*$))/g;
-    let factoryMatch;
-
-    while ((factoryMatch = factoryBlockRegex.exec(text)) !== null) {
-      const factoryName = factoryMatch[1];
-      const factoryBlock = factoryMatch[2];
-      const factoryStartIndex = factoryMatch.index;
-
-      // Search for trait definitions within this factory block
-      const traitRegex = /trait\s+:([a-zA-Z0-9_]+)\s+do/g;
-      let traitMatch;
-
-      while ((traitMatch = traitRegex.exec(factoryBlock)) !== null) {
-        const traitName = traitMatch[1];
-        const traitKey = `${factoryName}:${traitName}`;
-
-        // Only cache if not already cached (first definition takes precedence)
-        if (!this.traitCache.has(traitKey)) {
-          // Calculate absolute position of trait definition
-          const traitIndex = factoryStartIndex + traitMatch.index;
-          const lines = text.substring(0, traitIndex).split("\n");
-          const lineNumber = lines.length - 1;
-
-          // Cache trait with factory context
-          this.traitCache.set(traitKey, {
-            uri: file,
-            lineNumber: lineNumber,
-            factoryName: factoryName,
-          });
-        }
-      }
-    }
-  }
-
+  /**
+   * VSCode DocumentLinkProvider のメイン実装
+   */
   async provideDocumentLinks(
     document: vscode.TextDocument
   ): Promise<vscode.DocumentLink[]> {
-    // Return empty array if initialization is not complete
-    if (!this.isInitialized) {
+    // 初期化されていない場合は空配列を返す
+    if (!this.cacheManager.getIsInitialized()) {
       return [];
     }
 
     const links: vscode.DocumentLink[] = [];
     const text = document.getText();
 
-    // Regex pattern to match factory calls with traits:
-    //   create(:factory_name, :trait1, :trait2, options)
-    //   build(:factory_name, :trait1, :trait2, options)
-    //   etc.
-    const factoryCallRegex =
-      /(?:create|create_list|build|build_list|build_stubbed|build_stubbed_list)\s*(?:\(\s*)?((:[a-zA-Z0-9_]+)(?:\s*,\s*(:[a-zA-Z0-9_]+))*)\s*(?:,\s*[^)]*)?(?:\)|\n|$)/g;
+    // ファクトリ呼び出しを検出
+    const factoryCallRegex = getFactoryCallPattern();
     let match;
 
     while ((match = factoryCallRegex.exec(text)) !== null) {
-      const fullMatch = match[1]; // The part with factory name and traits
-      const factoryName = match[2].substring(1); // Remove the : prefix from factory name
+      const fullMatch = match[1]; // ファクトリ名とトレイトの部分
+      const factoryName = match[2].substring(1); // :プレフィックスを除去
 
-      // Create link for factory name
+      // ファクトリ名のリンクを作成
       const factoryNameMatch = match[2];
       const factoryNameStart = match.index + match[0].indexOf(factoryNameMatch);
       const factoryNameEnd = factoryNameStart + factoryNameMatch.length;
@@ -156,8 +177,8 @@ class FactoryLinkProvider implements vscode.DocumentLinkProvider {
         document.positionAt(factoryNameEnd)
       );
 
-      // Get factory file and line number from cache
-      const factoryInfo = this.factoryCache.get(factoryName);
+      // キャッシュからファクトリ情報を取得
+      const factoryInfo = this.cacheManager.getFactoryFileLocation(factoryName);
       if (factoryInfo) {
         const factoryLink = new vscode.DocumentLink(
           factoryRange,
@@ -174,19 +195,21 @@ class FactoryLinkProvider implements vscode.DocumentLinkProvider {
         links.push(factoryLink);
       }
 
-      // Find and create links for traits
-      const traitRegex = /:([a-zA-Z0-9_]+)/g;
+      // トレイトのリンクを検索・作成
+      const traitRegex = new RegExp(
+        TRAIT_REFERENCE_PATTERN.source,
+        TRAIT_REFERENCE_PATTERN.flags
+      );
       let traitMatch;
-      traitRegex.lastIndex = 0; // Reset regex
+      traitRegex.lastIndex = 0; // リセット
 
-      // Skip the first match (factory name)
+      // 最初のマッチ（ファクトリ名）をスキップ
       traitRegex.exec(fullMatch);
 
       while ((traitMatch = traitRegex.exec(fullMatch)) !== null) {
         const traitName = traitMatch[1];
-        const traitKey = `${factoryName}:${traitName}`;
 
-        // Calculate absolute position of trait symbol
+        // トレイトシンボルの絶対位置を計算
         const traitSymbolStart =
           match.index + match[0].indexOf(fullMatch) + traitMatch.index;
         const traitSymbolEnd = traitSymbolStart + traitMatch[0].length;
@@ -195,8 +218,11 @@ class FactoryLinkProvider implements vscode.DocumentLinkProvider {
           document.positionAt(traitSymbolEnd)
         );
 
-        // Get trait file and line number from cache
-        const traitInfo = this.traitCache.get(traitKey);
+        // キャッシュからトレイト情報を取得
+        const traitInfo = this.cacheManager.getTraitLocation(
+          factoryName,
+          traitName
+        );
         if (traitInfo) {
           const traitLink = new vscode.DocumentLink(
             traitRange,
@@ -218,15 +244,28 @@ class FactoryLinkProvider implements vscode.DocumentLinkProvider {
     return links;
   }
 
+  /**
+   * 指定されたファクトリ名のファイルを検索（後方互換性のため）
+   */
   async findFactoryFile(factoryName: string): Promise<vscode.Uri | undefined> {
-    // Wait for initialization if not complete
-    if (!this.isInitialized) {
+    // 初期化されていない場合は初期化を待つ
+    if (!this.cacheManager.getIsInitialized()) {
       await this.initializeFactoryFiles();
     }
 
-    // Get factory file from cache
-    const factoryInfo = this.factoryCache.get(factoryName);
+    // キャッシュからファクトリファイルを取得
+    const factoryInfo = this.cacheManager.getFactoryFileLocation(factoryName);
     return factoryInfo?.uri;
+  }
+
+  /**
+   * リソースのクリーンアップ
+   */
+  public dispose(): void {
+    this.configurationManager.dispose();
+    this.fileSearcher.dispose();
+    this.disposables.forEach((disposable) => disposable.dispose());
+    this.disposables = [];
   }
 }
 

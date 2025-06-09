@@ -72,6 +72,9 @@
     "pretest": "npm run compile && npm run lint",
     "lint": "eslint src --ext ts",
     "test": "node ./out/test/runTest.js",
+    "test:unit": "node ./out/test/runUnitTests.js",
+    "test:integration": "node ./out/test/runTest.js",
+    "test:all": "npm run test:unit && npm run test:integration",
     "test:watch": "npm run test -- --watch"
   },
   "devDependencies": {
