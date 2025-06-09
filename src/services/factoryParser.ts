@@ -73,7 +73,7 @@ export class FactoryParser {
 
     let match;
     while ((match = regex.exec(text)) !== null) {
-      const factoryName = match[1];
+      const factoryName = match[2]; // インデックスを修正
 
       // 行番号を計算
       const lineNumber = this.calculateLineNumber(text, match.index);
@@ -103,8 +103,8 @@ export class FactoryParser {
 
     let factoryMatch;
     while ((factoryMatch = factoryBlockRegex.exec(text)) !== null) {
-      const factoryName = factoryMatch[1];
-      const factoryBlock = factoryMatch[2];
+      const factoryName = factoryMatch[1]; // インデックスを1に修正
+      const factoryBlock = factoryMatch[2]; // インデックスを2に修正
       const factoryStartIndex = factoryMatch.index;
 
       // このファクトリブロック内のトレイトを検索
@@ -118,7 +118,10 @@ export class FactoryParser {
         const traitName = traitMatch[1];
 
         // 絶対位置を計算
-        const traitIndex = factoryStartIndex + traitMatch.index;
+        // ファクトリブロック開始位置 + factoryMatch[0]の長さから実際のブロック開始を取得
+        const factoryHeaderLength = factoryMatch[0].indexOf(factoryMatch[2]);
+        const traitIndex =
+          factoryStartIndex + factoryHeaderLength + traitMatch.index;
         const lineNumber = this.calculateLineNumber(text, traitIndex);
 
         // Location オブジェクトを作成
@@ -206,7 +209,7 @@ export class FactoryParser {
 
     let match;
     while ((match = regex.exec(text)) !== null) {
-      names.push(match[1]);
+      names.push(match[2]); // インデックスを修正
     }
 
     return names;
