@@ -86,6 +86,17 @@ export class ConfigurationManager {
   }
 
   /**
+   * Get parallel processing batch size configuration
+   */
+  public getParallelBatchSize(): number {
+    const config = vscode.workspace.getConfiguration(CONFIG_SECTION);
+    const batchSize = config.get<number>("parallelBatchSize", 10);
+
+    // Set minimum and maximum bounds
+    return Math.min(Math.max(batchSize, 1), 50);
+  }
+
+  /**
    * 設定変更時のコールバックを登録
    */
   public onConfigurationChange(callback: () => void): void {

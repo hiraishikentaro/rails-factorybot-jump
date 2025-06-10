@@ -13,10 +13,6 @@ import {
 } from "../utils/regexPatterns";
 import { FACTORY_FILE_PRIORITY_ORDER } from "../constants/defaults";
 
-/**
- * VSCode DocumentLinkProvider の実装
- * 新しいアーキテクチャに基づいて各サービスを利用してリンクを生成
- */
 class FactoryLinkProvider implements vscode.DocumentLinkProvider {
   private configurationManager: ConfigurationManager;
   private fileSearcher: FileSearcher;
@@ -25,6 +21,10 @@ class FactoryLinkProvider implements vscode.DocumentLinkProvider {
   private errorNotificationService: ErrorNotificationService;
   private disposables: vscode.Disposable[] = [];
 
+  // Initialization state management
+  private isInitializing = false;
+  private initializationPromise: Promise<void> | null = null;
+
   constructor() {
     // エラー通知サービスを最初に初期化
     this.errorNotificationService = new ErrorNotificationService();
@@ -32,7 +32,10 @@ class FactoryLinkProvider implements vscode.DocumentLinkProvider {
     // 各サービスを初期化（エラー通知サービスを依存注入）
     this.configurationManager = new ConfigurationManager();
     this.fileSearcher = new FileSearcher(this.errorNotificationService);
-    this.factoryParser = new FactoryParser(this.errorNotificationService);
+    this.factoryParser = new FactoryParser(
+      this.errorNotificationService,
+      this.configurationManager.getParallelBatchSize()
+    );
     this.cacheManager = new CacheManager();
 
     // 設定変更時の処理を登録
@@ -52,48 +55,100 @@ class FactoryLinkProvider implements vscode.DocumentLinkProvider {
 
     // 自動初期化が有効な場合は初期化を実行
     if (this.configurationManager.isAutoInitializeEnabled()) {
-      this.initializeFactoryFiles();
+      this.initializeFactoryFilesAsync();
     }
   }
 
   /**
-   * ファクトリファイルの初期化
+   * Start factory file initialization asynchronously
+   */
+  private initializeFactoryFilesAsync(): void {
+    if (!this.initializationPromise && !this.cacheManager.getIsInitialized()) {
+      this.initializationPromise = this.initializeFactoryFiles();
+    }
+  }
+
+  /**
+   * Initialize factory files with progress indicator
    */
   async initializeFactoryFiles(): Promise<void> {
-    if (this.cacheManager.getIsInitialized()) {
+    if (this.cacheManager.getIsInitialized() || this.isInitializing) {
       return;
     }
 
+    this.isInitializing = true;
+
     try {
-      // 設定からファクトリパスを取得
-      const factoryPaths = this.configurationManager.getFactoryPaths();
+      await vscode.window.withProgress(
+        {
+          location: vscode.ProgressLocation.Notification,
+          title: "Initializing Factory Bot files...",
+          cancellable: false,
+        },
+        async (progress) => {
+          progress.report({
+            increment: 0,
+            message: "Loading configuration...",
+          });
 
-      // ファクトリファイルを検索
-      const factoryFiles = await this.fileSearcher.searchFactoryFiles(
-        factoryPaths
+          // 設定からファクトリパスを取得
+          const factoryPaths = this.configurationManager.getFactoryPaths();
+
+          progress.report({
+            increment: 20,
+            message: "Searching factory files...",
+          });
+
+          // ファクトリファイルを検索
+          const factoryFiles = await this.fileSearcher.searchFactoryFiles(
+            factoryPaths
+          );
+
+          progress.report({
+            increment: 40,
+            message: "Sorting files by priority...",
+          });
+
+          // 優先順位でソート
+          const sortedFiles = this.fileSearcher.sortFilesByPriority(
+            factoryFiles,
+            FACTORY_FILE_PRIORITY_ORDER
+          );
+
+          progress.report({
+            increment: 50,
+            message: "Clearing cache...",
+          });
+
+          // すべてのキャッシュをクリア
+          this.cacheManager.clearAll();
+
+          progress.report({ increment: 60, message: "Parsing files..." });
+
+          // ファイルを解析してキャッシュに追加（プログレス付き）
+          await this.parseAndCacheFilesWithProgress(sortedFiles, progress);
+
+          progress.report({
+            increment: 90,
+            message: "Finalizing initialization...",
+          });
+
+          // 初期化完了を設定
+          this.cacheManager.setInitialized(true);
+
+          progress.report({
+            increment: 100,
+            message: "Initialization complete",
+          });
+
+          if (this.configurationManager.isDebugMode()) {
+            const stats = this.cacheManager.getCacheStats();
+            console.log(
+              `Factory initialization completed: ${stats.factoryCount} factories, ${stats.traitCount} traits`
+            );
+          }
+        }
       );
-
-      // 優先順位でソート
-      const sortedFiles = this.fileSearcher.sortFilesByPriority(
-        factoryFiles,
-        FACTORY_FILE_PRIORITY_ORDER
-      );
-
-      // すべてのキャッシュをクリア
-      this.cacheManager.clearAll();
-
-      // ファイルを解析してキャッシュに追加
-      await this.parseAndCacheFiles(sortedFiles);
-
-      // 初期化完了を設定
-      this.cacheManager.setInitialized(true);
-
-      if (this.configurationManager.isDebugMode()) {
-        const stats = this.cacheManager.getCacheStats();
-        console.log(
-          `Factory initialization completed: ${stats.factoryCount} factories, ${stats.traitCount} traits`
-        );
-      }
     } catch (error) {
       await this.errorNotificationService.logError({
         level: ErrorLevel.ERROR,
@@ -105,17 +160,39 @@ class FactoryLinkProvider implements vscode.DocumentLinkProvider {
         showToUser: true,
         retry: () => this.initializeFactoryFiles(),
       });
+    } finally {
+      this.isInitializing = false;
+      this.initializationPromise = null;
     }
   }
 
   /**
-   * ファイルを解析してキャッシュに追加
+   * Parse and cache files with progress reporting
    */
-  private async parseAndCacheFiles(files: vscode.Uri[]): Promise<void> {
-    // 解析結果を取得
+  private async parseAndCacheFilesWithProgress(
+    files: vscode.Uri[],
+    progress: vscode.Progress<{ increment?: number; message?: string }>
+  ): Promise<void> {
+    if (files.length === 0) {
+      return;
+    }
+
+    // Report initial parsing progress
+    progress.report({
+      increment: 0,
+      message: `Parsing ${files.length} factory files...`,
+    });
+
+    // Parse files with enhanced parallel processing
     const parseResult = await this.factoryParser.parseMultipleFiles(files);
 
-    // キャッシュに追加（先に見つかったファクトリが優先される）
+    // Report caching progress
+    progress.report({
+      increment: 15,
+      message: "Caching parsed factories...",
+    });
+
+    // Cache results with priority handling
     parseResult.factories.forEach((factory) => {
       if (!this.cacheManager.getFactory(factory.name)) {
         this.cacheManager.cacheFactory(factory);
@@ -127,6 +204,25 @@ class FactoryLinkProvider implements vscode.DocumentLinkProvider {
         this.cacheManager.cacheTrait(trait);
       }
     });
+
+    progress.report({
+      increment: 15,
+      message: `Cached ${parseResult.factories.length} factories and ${parseResult.traits.length} traits`,
+    });
+  }
+
+  /**
+   * Parse and cache files (legacy method for backward compatibility)
+   */
+  private async parseAndCacheFiles(files: vscode.Uri[]): Promise<void> {
+    // Use the new method without progress reporting
+    const dummyProgress: vscode.Progress<{
+      increment?: number;
+      message?: string;
+    }> = {
+      report: () => {}, // No-op progress reporter
+    };
+    await this.parseAndCacheFilesWithProgress(files, dummyProgress);
   }
 
   /**
@@ -146,31 +242,63 @@ class FactoryLinkProvider implements vscode.DocumentLinkProvider {
     const cacheTimeout = this.configurationManager.getCacheTimeout() * 1000; // 秒をミリ秒に変換
     this.cacheManager.setCacheTimeout(cacheTimeout);
 
+    // Update parallel batch size
+    this.factoryParser.setBatchSize(
+      this.configurationManager.getParallelBatchSize()
+    );
+
     // 再初期化
     this.cacheManager.setInitialized(false);
-    this.initializeFactoryFiles();
+    this.isInitializing = false;
+    this.initializationPromise = null;
+    this.initializeFactoryFilesAsync();
   }
 
   /**
-   * ファイル変更時の処理
+   * Handle file changes with optimized cache updates
    */
   private async handleFileChange(uri: vscode.Uri): Promise<void> {
     if (this.configurationManager.isDebugMode()) {
       console.log(`Factory file changed: ${uri.fsPath}`);
     }
 
-    // 変更されたファイルを再解析
-    const parseResult = await this.factoryParser.parseFile(uri);
+    try {
+      // Check if file actually needs to be updated
+      const shouldUpdate = await this.cacheManager.shouldUpdateFile(uri);
+      if (!shouldUpdate) {
+        if (this.configurationManager.isDebugMode()) {
+          console.log(`File ${uri.fsPath} is up to date, skipping update`);
+        }
+        return;
+      }
 
-    // 既存のキャッシュから該当ファクトリを削除して再キャッシュ
-    parseResult.factories.forEach((factory) => {
-      this.cacheManager.removeFactory(factory.name);
-      this.cacheManager.cacheFactory(factory);
-    });
+      // Parse the changed file
+      const parseResult = await this.factoryParser.parseFile(uri);
 
-    parseResult.traits.forEach((trait) => {
-      this.cacheManager.cacheTrait(trait);
-    });
+      // Update cache for this specific file (removes old entries and adds new ones)
+      this.cacheManager.updateFileCache(
+        uri,
+        parseResult.factories,
+        parseResult.traits
+      );
+
+      if (this.configurationManager.isDebugMode()) {
+        console.log(
+          `Updated cache for file: ${uri.fsPath} - ${parseResult.factories.length} factories, ${parseResult.traits.length} traits`
+        );
+      }
+    } catch (error) {
+      await this.errorNotificationService.logError({
+        level: ErrorLevel.WARNING,
+        context: "File Change Handling",
+        message: `Failed to handle file change: ${uri.fsPath}`,
+        error: error as Error,
+        showToUser: false,
+        additionalInfo: {
+          filePath: uri.fsPath,
+        },
+      });
+    }
   }
 
   /**
@@ -179,8 +307,22 @@ class FactoryLinkProvider implements vscode.DocumentLinkProvider {
   async provideDocumentLinks(
     document: vscode.TextDocument
   ): Promise<vscode.DocumentLink[]> {
-    // 初期化されていない場合は空配列を返す
+    // 初期化が完了していない場合の処理
     if (!this.cacheManager.getIsInitialized()) {
+      // 初期化が開始されていない場合、非同期で開始
+      if (!this.initializationPromise && !this.isInitializing) {
+        this.initializeFactoryFilesAsync();
+      }
+
+      // 初期化中の場合、プログレスメッセージを表示してから空配列を返す
+      if (this.isInitializing) {
+        // Show initialization status in status bar
+        vscode.window.setStatusBarMessage(
+          "$(sync~spin) Initializing Factory Bot...",
+          3000
+        );
+      }
+
       return [];
     }
 
