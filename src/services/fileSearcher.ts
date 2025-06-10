@@ -4,6 +4,10 @@
 
 import * as vscode from "vscode";
 import { normalizePath } from "../utils/pathUtils";
+import {
+  ErrorNotificationService,
+  ErrorLevel,
+} from "./errorNotificationService";
 
 /**
  * ファイル検索を担当するクラス
@@ -12,8 +16,12 @@ export class FileSearcher {
   private disposables: vscode.Disposable[] = [];
   private onFileChangeCallbacks: ((uri: vscode.Uri) => void)[] = [];
   private fileWatcher?: vscode.FileSystemWatcher;
+  private errorNotificationService: ErrorNotificationService;
 
-  constructor() {
+  constructor(errorNotificationService?: ErrorNotificationService) {
+    this.errorNotificationService =
+      errorNotificationService || new ErrorNotificationService();
+
     // ファイル監視を開始
     this.startWatchingFiles();
   }
@@ -85,10 +93,17 @@ export class FileSearcher {
         const files = await vscode.workspace.findFiles(pattern);
         allFiles.push(...files);
       } catch (error) {
-        console.warn(
-          `Failed to search files with pattern: ${normalizedPattern}`,
-          error
-        );
+        await this.errorNotificationService.logError({
+          level: ErrorLevel.WARNING,
+          context: "File Search",
+          message: `Failed to search files with pattern: ${normalizedPattern}`,
+          error: error as Error,
+          showToUser: false,
+          additionalInfo: {
+            pattern: normalizedPattern,
+            originalPattern: pathPattern,
+          },
+        });
       }
     }
 

@@ -11,6 +11,10 @@ import {
   TRAIT_DEFINITION_PATTERN,
   FACTORY_BLOCK_PATTERN,
 } from "../utils/regexPatterns";
+import {
+  ErrorNotificationService,
+  ErrorLevel,
+} from "./errorNotificationService";
 
 /**
  * ファクトリ解析結果
@@ -24,20 +28,29 @@ export interface ParseResult {
  * ファクトリ解析を担当するクラス
  */
 export class FactoryParser {
+  private errorNotificationService: ErrorNotificationService;
+
+  constructor(errorNotificationService?: ErrorNotificationService) {
+    this.errorNotificationService =
+      errorNotificationService || new ErrorNotificationService();
+  }
+
   /**
    * ファイルからファクトリとトレイトを解析
    */
   public async parseFile(fileUri: vscode.Uri): Promise<ParseResult> {
-    try {
-      // ファイル内容を読み込み
-      const content = await vscode.workspace.fs.readFile(fileUri);
-      const text = new TextDecoder().decode(content);
+    return await this.errorNotificationService.safeFileOperation(
+      async () => {
+        // ファイル内容を読み込み
+        const content = await vscode.workspace.fs.readFile(fileUri);
+        const text = new TextDecoder().decode(content);
 
-      return this.parseText(text, fileUri);
-    } catch (error) {
-      console.warn(`Failed to parse factory file: ${fileUri.fsPath}`, error);
-      return { factories: [], traits: [] };
-    }
+        return this.parseText(text, fileUri);
+      },
+      { factories: [], traits: [] },
+      "Factory File Parsing",
+      fileUri.fsPath
+    );
   }
 
   /**
@@ -66,24 +79,55 @@ export class FactoryParser {
    */
   private findFactoryDefinitions(text: string, fileUri: vscode.Uri): Factory[] {
     const factories: Factory[] = [];
-    const regex = new RegExp(
-      FACTORY_DEFINITION_PATTERN.source,
-      FACTORY_DEFINITION_PATTERN.flags
-    );
 
-    let match;
-    while ((match = regex.exec(text)) !== null) {
-      const factoryName = match[2]; // インデックスを修正
+    try {
+      const regex = new RegExp(
+        FACTORY_DEFINITION_PATTERN.source,
+        FACTORY_DEFINITION_PATTERN.flags
+      );
 
-      // 行番号を計算
-      const lineNumber = this.calculateLineNumber(text, match.index);
+      let match;
+      while ((match = regex.exec(text)) !== null) {
+        try {
+          // マッチした内容の検証
+          if (!match[2]) {
+            continue; // ファクトリ名がない場合はスキップ
+          }
 
-      // Location オブジェクトを作成
-      const location = new Location(fileUri, lineNumber);
+          const factoryName = match[2];
 
-      // Factory オブジェクトを作成
-      const factory = new Factory(factoryName, location);
-      factories.push(factory);
+          // 行番号を計算
+          const lineNumber = this.calculateLineNumber(text, match.index);
+
+          // Location オブジェクトを作成
+          const location = new Location(fileUri, lineNumber);
+
+          // Factory オブジェクトを作成
+          const factory = new Factory(factoryName, location);
+          factories.push(factory);
+        } catch (error) {
+          // 個別のファクトリ処理エラーをログに記録し、処理を継続
+          this.errorNotificationService.logError({
+            level: ErrorLevel.WARNING,
+            context: "Factory Definition Parsing",
+            message: `Failed to parse factory definition: ${match[0]}`,
+            error: error as Error,
+            showToUser: false,
+            additionalInfo: {
+              filePath: fileUri.fsPath,
+              matchedText: match[0],
+              matchIndex: match.index,
+            },
+          });
+        }
+      }
+    } catch (error) {
+      // 正規表現エラーの処理
+      this.errorNotificationService.handleRegexError(
+        FACTORY_DEFINITION_PATTERN.source,
+        error as Error,
+        `Factory Definition Search - ${fileUri.fsPath}`
+      );
     }
 
     return factories;
@@ -95,42 +139,51 @@ export class FactoryParser {
   private findTraitDefinitions(text: string, fileUri: vscode.Uri): Trait[] {
     const traits: Trait[] = [];
 
-    // ファクトリブロック内のトレイトを検索
-    const factoryBlockRegex = new RegExp(
-      FACTORY_BLOCK_PATTERN.source,
-      FACTORY_BLOCK_PATTERN.flags
-    );
-
-    let factoryMatch;
-    while ((factoryMatch = factoryBlockRegex.exec(text)) !== null) {
-      const factoryName = factoryMatch[1]; // インデックスを1に修正
-      const factoryBlock = factoryMatch[2]; // インデックスを2に修正
-      const factoryStartIndex = factoryMatch.index;
-
-      // このファクトリブロック内のトレイトを検索
-      const traitRegex = new RegExp(
-        TRAIT_DEFINITION_PATTERN.source,
-        TRAIT_DEFINITION_PATTERN.flags
+    try {
+      // ファクトリブロック内のトレイトを検索
+      const factoryBlockRegex = new RegExp(
+        FACTORY_BLOCK_PATTERN.source,
+        FACTORY_BLOCK_PATTERN.flags
       );
 
-      let traitMatch;
-      while ((traitMatch = traitRegex.exec(factoryBlock)) !== null) {
-        const traitName = traitMatch[1];
+      let factoryMatch;
+      while ((factoryMatch = factoryBlockRegex.exec(text)) !== null) {
+        const factoryName = factoryMatch[1]; // インデックスを1に修正
+        const factoryBlock = factoryMatch[2]; // インデックスを2に修正
+        const factoryStartIndex = factoryMatch.index;
 
-        // 絶対位置を計算
-        // ファクトリブロック開始位置 + factoryMatch[0]の長さから実際のブロック開始を取得
-        const factoryHeaderLength = factoryMatch[0].indexOf(factoryMatch[2]);
-        const traitIndex =
-          factoryStartIndex + factoryHeaderLength + traitMatch.index;
-        const lineNumber = this.calculateLineNumber(text, traitIndex);
+        // このファクトリブロック内のトレイトを検索
+        const traitRegex = new RegExp(
+          TRAIT_DEFINITION_PATTERN.source,
+          TRAIT_DEFINITION_PATTERN.flags
+        );
 
-        // Location オブジェクトを作成
-        const location = new Location(fileUri, lineNumber);
+        let traitMatch;
+        while ((traitMatch = traitRegex.exec(factoryBlock)) !== null) {
+          const traitName = traitMatch[1];
 
-        // Trait オブジェクトを作成
-        const trait = new Trait(traitName, location, factoryName);
-        traits.push(trait);
+          // 絶対位置を計算
+          // ファクトリブロック開始位置 + factoryMatch[0]の長さから実際のブロック開始を取得
+          const factoryHeaderLength = factoryMatch[0].indexOf(factoryMatch[2]);
+          const traitIndex =
+            factoryStartIndex + factoryHeaderLength + traitMatch.index;
+          const lineNumber = this.calculateLineNumber(text, traitIndex);
+
+          // Location オブジェクトを作成
+          const location = new Location(fileUri, lineNumber);
+
+          // Trait オブジェクトを作成
+          const trait = new Trait(traitName, location, factoryName);
+          traits.push(trait);
+        }
       }
+    } catch (error) {
+      // 正規表現エラーの処理
+      this.errorNotificationService.handleRegexError(
+        TRAIT_DEFINITION_PATTERN.source,
+        error as Error,
+        `Trait Definition Search - ${fileUri.fsPath}`
+      );
     }
 
     return traits;
