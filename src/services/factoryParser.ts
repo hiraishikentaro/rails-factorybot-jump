@@ -24,15 +24,31 @@ export interface ParseResult {
   traits: Trait[];
 }
 
+const BATCH_SIZE = 10;
+
 /**
  * ファクトリ解析を担当するクラス
  */
 export class FactoryParser {
   private errorNotificationService: ErrorNotificationService;
+  private batchSize: number = BATCH_SIZE; // Default batch size
 
-  constructor(errorNotificationService?: ErrorNotificationService) {
+  constructor(
+    errorNotificationService?: ErrorNotificationService,
+    batchSize?: number
+  ) {
     this.errorNotificationService =
       errorNotificationService || new ErrorNotificationService();
+    if (batchSize) {
+      this.batchSize = batchSize;
+    }
+  }
+
+  /**
+   * Set batch size for parallel processing
+   */
+  public setBatchSize(batchSize: number): void {
+    this.batchSize = Math.min(Math.max(batchSize, 1), 50);
   }
 
   /**
@@ -218,7 +234,7 @@ export class FactoryParser {
   }
 
   /**
-   * 複数のファイルを一括解析
+   * Parse multiple files in parallel with optimized batch processing
    */
   public async parseMultipleFiles(
     fileUris: vscode.Uri[]
@@ -226,17 +242,78 @@ export class FactoryParser {
     const allFactories: Factory[] = [];
     const allTraits: Trait[] = [];
 
-    // 並列処理で高速化
-    const parsePromises = fileUris.map((uri) => this.parseFile(uri));
-    const results = await Promise.all(parsePromises);
+    if (fileUris.length === 0) {
+      return { factories: allFactories, traits: allTraits };
+    }
 
-    // 結果をマージ
-    results.forEach((result) => {
-      allFactories.push(...result.factories);
-      allTraits.push(...result.traits);
-    });
+    // Process files in batches to avoid overwhelming the system
+    const batches = this.createBatches(fileUris, this.batchSize);
+
+    for (const batch of batches) {
+      try {
+        // Parallel processing within each batch
+        const parsePromises = batch.map((uri) => this.safeParseFile(uri));
+        const results = await Promise.all(parsePromises);
+
+        // Merge successful results
+        results.forEach((result) => {
+          if (result) {
+            allFactories.push(...result.factories);
+            allTraits.push(...result.traits);
+          }
+        });
+      } catch (error) {
+        // Log batch processing error but continue with other batches
+        this.errorNotificationService.logError({
+          level: ErrorLevel.WARNING,
+          context: "Batch File Parsing",
+          message: `Failed to process file batch`,
+          error: error as Error,
+          showToUser: false,
+          additionalInfo: {
+            batchSize: batch.length,
+            fileNames: batch.map((uri) => uri.fsPath),
+          },
+        });
+      }
+    }
 
     return { factories: allFactories, traits: allTraits };
+  }
+
+  /**
+   * Create batches from file URIs for optimized processing
+   */
+  private createBatches<T>(items: T[], batchSize: number): T[][] {
+    const batches: T[][] = [];
+    for (let i = 0; i < items.length; i += batchSize) {
+      batches.push(items.slice(i, i + batchSize));
+    }
+    return batches;
+  }
+
+  /**
+   * Safely parse a file with error handling
+   */
+  private async safeParseFile(
+    fileUri: vscode.Uri
+  ): Promise<ParseResult | null> {
+    try {
+      return await this.parseFile(fileUri);
+    } catch (error) {
+      // Log individual file parsing error
+      this.errorNotificationService.logError({
+        level: ErrorLevel.WARNING,
+        context: "Individual File Parsing",
+        message: `Failed to parse file: ${fileUri.fsPath}`,
+        error: error as Error,
+        showToUser: false,
+        additionalInfo: {
+          filePath: fileUri.fsPath,
+        },
+      });
+      return null;
+    }
   }
 
   /**

@@ -74,7 +74,51 @@ suite("Extension Test Suite", () => {
   });
 
   setup(() => {
+    // Mock getConfiguration to disable auto-initialization for tests
+    Object.defineProperty(vscode.workspace, "getConfiguration", {
+      value: (section?: string) => ({
+        get: (key: string, defaultValue?: unknown) => {
+          if (section === "rails-factorybot-jump") {
+            if (key === "autoInitialize") {
+              return false; // Disable auto-initialization for tests
+            }
+            if (key === "debugMode") {
+              return false;
+            }
+            if (key === "cacheTimeout") {
+              return 60;
+            }
+            if (key === "parallelBatchSize") {
+              return 10;
+            }
+            if (key === "factoryPaths") {
+              return [
+                path
+                  .join("spec", "factories", "**", "*.rb")
+                  .replace(/\\/g, "/"),
+              ];
+            }
+          }
+          return defaultValue;
+        },
+      }),
+      configurable: true,
+    });
+
     factoryLinkProvider = new FactoryLinkProvider();
+  });
+
+  teardown(() => {
+    // Restore original getConfiguration
+    Object.defineProperty(vscode.workspace, "getConfiguration", {
+      value: originalGetConfiguration,
+      configurable: true,
+    });
+
+    // Clean up factoryLinkProvider
+    if (factoryLinkProvider) {
+      factoryLinkProvider.dispose();
+    }
   });
 
   test("FactoryLinkProvider should be instantiated", () => {
@@ -146,7 +190,12 @@ suite("Extension Test Suite", () => {
     );
 
     try {
+      // Wait for initialization to complete
       await factoryLinkProvider.initializeFactoryFiles();
+
+      // Add a small delay to ensure initialization is fully complete
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
       const userFactory = await factoryLinkProvider.findFactoryFile("user");
       const postFactory = await factoryLinkProvider.findFactoryFile("post");
 
@@ -172,6 +221,8 @@ suite("Extension Test Suite", () => {
     try {
       // Initialize and verify first factory
       await factoryLinkProvider.initializeFactoryFiles();
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
       const userFactory = await factoryLinkProvider.findFactoryFile("user");
       assert.ok(userFactory, "Should find user factory file");
 
@@ -184,6 +235,7 @@ suite("Extension Test Suite", () => {
       // Create a new instance to force reinitialization
       factoryLinkProvider = new FactoryLinkProvider();
       await factoryLinkProvider.initializeFactoryFiles();
+      await new Promise((resolve) => setTimeout(resolve, 100));
 
       // Verify updated factory
       const postFactory = await factoryLinkProvider.findFactoryFile("post");
@@ -226,6 +278,8 @@ suite("Extension Test Suite", () => {
 
     try {
       await factoryLinkProvider.initializeFactoryFiles();
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
       const userFactory = await factoryLinkProvider.findFactoryFile("user");
       assert.ok(userFactory, "Should find user factory file in default path");
     } finally {

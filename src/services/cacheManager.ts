@@ -23,11 +23,22 @@ interface CachedTraitInfo {
 }
 
 /**
+ * File-based cache tracking for optimized updates
+ */
+interface FileCacheInfo {
+  uri: string;
+  lastModified: number;
+  factories: string[];
+  traits: string[];
+}
+
+/**
  * キャッシュ管理を担当するクラス
  */
 export class CacheManager {
   private factoryCache: Map<string, CachedFactoryInfo> = new Map();
   private traitCache: Map<string, CachedTraitInfo> = new Map();
+  private fileCache: Map<string, FileCacheInfo> = new Map(); // File-based cache tracking
   private isInitialized = false;
   private cacheTimeout: number = 60000; // デフォルト1分
 
@@ -38,17 +49,21 @@ export class CacheManager {
   }
 
   /**
-   * ファクトリをキャッシュに追加
+   * Cache factory with file tracking
    */
   public cacheFactory(factory: Factory): void {
     this.factoryCache.set(factory.name, {
       factory,
       timestamp: Date.now(),
     });
+
+    // Track factory in file cache
+    const fileUri = factory.location.uri.toString();
+    this.addToFileCache(fileUri, factory.name, null);
   }
 
   /**
-   * トレイトをキャッシュに追加
+   * Cache trait with file tracking
    */
   public cacheTrait(trait: Trait): void {
     const key = trait.getKey();
@@ -56,6 +71,117 @@ export class CacheManager {
       trait,
       timestamp: Date.now(),
     });
+
+    // Track trait in file cache
+    const fileUri = trait.location.uri.toString();
+    this.addToFileCache(fileUri, null, key);
+  }
+
+  /**
+   * Add factory or trait to file cache tracking
+   */
+  private addToFileCache(
+    fileUri: string,
+    factoryName: string | null,
+    traitKey: string | null
+  ): void {
+    let fileInfo = this.fileCache.get(fileUri);
+    if (!fileInfo) {
+      fileInfo = {
+        uri: fileUri,
+        lastModified: Date.now(),
+        factories: [],
+        traits: [],
+      };
+      this.fileCache.set(fileUri, fileInfo);
+    }
+
+    if (factoryName && !fileInfo.factories.includes(factoryName)) {
+      fileInfo.factories.push(factoryName);
+    }
+    if (traitKey && !fileInfo.traits.includes(traitKey)) {
+      fileInfo.traits.push(traitKey);
+    }
+    fileInfo.lastModified = Date.now();
+  }
+
+  /**
+   * Remove all cache entries for a specific file
+   */
+  public removeFileFromCache(fileUri: vscode.Uri): void {
+    const uriString = fileUri.toString();
+    const fileInfo = this.fileCache.get(uriString);
+
+    if (fileInfo) {
+      // Remove all factories from this file
+      fileInfo.factories.forEach((factoryName) => {
+        this.factoryCache.delete(factoryName);
+      });
+
+      // Remove all traits from this file
+      fileInfo.traits.forEach((traitKey) => {
+        this.traitCache.delete(traitKey);
+      });
+
+      // Remove file cache entry
+      this.fileCache.delete(uriString);
+    }
+  }
+
+  /**
+   * Check if file needs to be updated based on modification time
+   */
+  public async shouldUpdateFile(fileUri: vscode.Uri): Promise<boolean> {
+    const uriString = fileUri.toString();
+    const fileInfo = this.fileCache.get(uriString);
+
+    if (!fileInfo) {
+      return true; // File not in cache, needs to be processed
+    }
+
+    try {
+      const stat = await vscode.workspace.fs.stat(fileUri);
+      return stat.mtime > fileInfo.lastModified;
+    } catch (error) {
+      // File might have been deleted, remove from cache
+      this.removeFileFromCache(fileUri);
+      return false;
+    }
+  }
+
+  /**
+   * Update cache for a specific file (optimized for individual file changes)
+   */
+  public updateFileCache(
+    fileUri: vscode.Uri,
+    factories: Factory[],
+    traits: Trait[]
+  ): void {
+    // First remove existing cache entries for this file
+    this.removeFileFromCache(fileUri);
+
+    // Then add new entries
+    factories.forEach((factory) => this.cacheFactory(factory));
+    traits.forEach((trait) => this.cacheTrait(trait));
+  }
+
+  /**
+   * Get cache statistics including file tracking
+   */
+  public getCacheStats(): {
+    factoryCount: number;
+    traitCount: number;
+    fileCount: number;
+    isInitialized: boolean;
+    cacheTimeout: number;
+  } {
+    return {
+      factoryCount: this.factoryCache.size,
+      traitCount: this.traitCache.size,
+      fileCount: this.fileCache.size,
+      isInitialized: this.isInitialized,
+      cacheTimeout: this.cacheTimeout,
+    };
   }
 
   /**
@@ -184,6 +310,7 @@ export class CacheManager {
   public clearAll(): void {
     this.clearFactoryCache();
     this.clearTraitCache();
+    this.fileCache.clear(); // Clear file cache as well
     this.isInitialized = false;
   }
 
@@ -218,23 +345,6 @@ export class CacheManager {
   private isCacheExpired(timestamp: number, currentTime?: number): boolean {
     const now = currentTime || Date.now();
     return now - timestamp > this.cacheTimeout;
-  }
-
-  /**
-   * キャッシュの統計情報を取得
-   */
-  public getCacheStats(): {
-    factoryCount: number;
-    traitCount: number;
-    isInitialized: boolean;
-    cacheTimeout: number;
-  } {
-    return {
-      factoryCount: this.factoryCache.size,
-      traitCount: this.traitCache.size,
-      isInitialized: this.isInitialized,
-      cacheTimeout: this.cacheTimeout,
-    };
   }
 
   /**
