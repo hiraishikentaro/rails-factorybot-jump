@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2025-06-10
+
+### Added
+
+- Support for jumping to FactoryBot trait definitions
+- Comprehensive test suite with unit and integration tests
+- Error notification service for better user experience
+- Cache management system for improved performance
+- Factory parser service with optimized parsing logic
+- File search service for efficient factory file discovery
+- New model classes: Factory, Location, and Trait
+- Configuration manager for extension settings
+- GitHub Actions workflows for CI/CD automation
+- Wiki documentation as a submodule
+
+### Changed
+
+- Significantly refactored FactoryLinkProvider with improved architecture
+- Enhanced test initialization and setup processes
+- Improved Location class toString method
+- Updated GitHub Actions workflow names and configurations
+- Separated unit and integration test workflows
+
+### Fixed
+
+- Cross-platform path compatibility using POSIX paths
+- Factory call detection accuracy and reliability
+- Code formatting and consistency improvements
+
 ## [1.2.0] - 2024-04-11
 
 ### Added
