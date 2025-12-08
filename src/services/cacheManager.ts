@@ -186,6 +186,7 @@ export class CacheManager {
 
   /**
    * ファクトリ名からファクトリ情報を取得
+   * 期限切れでも値を返す（stale-while-revalidate パターン）
    */
   public getFactory(factoryName: string): Factory | undefined {
     const cached = this.factoryCache.get(factoryName);
@@ -194,17 +195,25 @@ export class CacheManager {
       return undefined;
     }
 
-    // キャッシュの有効期限をチェック
-    if (this.isCacheExpired(cached.timestamp)) {
-      this.factoryCache.delete(factoryName);
-      return undefined;
-    }
-
+    // 期限切れでも値は返す（削除しない）
+    // 呼び出し元で必要に応じて再初期化をトリガーする
     return cached.factory;
   }
 
   /**
+   * ファクトリキャッシュが期限切れかどうかを確認
+   */
+  public isFactoryCacheStale(factoryName: string): boolean {
+    const cached = this.factoryCache.get(factoryName);
+    if (!cached) {
+      return true;
+    }
+    return this.isCacheExpired(cached.timestamp);
+  }
+
+  /**
    * トレイト名からトレイト情報を取得
+   * 期限切れでも値を返す（stale-while-revalidate パターン）
    */
   public getTrait(factoryName: string, traitName: string): Trait | undefined {
     const key = `${factoryName}:${traitName}`;
@@ -214,12 +223,7 @@ export class CacheManager {
       return undefined;
     }
 
-    // キャッシュの有効期限をチェック
-    if (this.isCacheExpired(cached.timestamp)) {
-      this.traitCache.delete(key);
-      return undefined;
-    }
-
+    // 期限切れでも値は返す（削除しない）
     return cached.trait;
   }
 

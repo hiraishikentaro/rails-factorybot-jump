@@ -212,20 +212,6 @@ class FactoryLinkProvider implements vscode.DocumentLinkProvider {
   }
 
   /**
-   * Parse and cache files (legacy method for backward compatibility)
-   */
-  private async parseAndCacheFiles(files: vscode.Uri[]): Promise<void> {
-    // Use the new method without progress reporting
-    const dummyProgress: vscode.Progress<{
-      increment?: number;
-      message?: string;
-    }> = {
-      report: () => {}, // No-op progress reporter
-    };
-    await this.parseAndCacheFilesWithProgress(files, dummyProgress);
-  }
-
-  /**
    * 設定変更時の処理
    */
   private handleConfigurationChange(): void {
@@ -323,6 +309,17 @@ class FactoryLinkProvider implements vscode.DocumentLinkProvider {
         );
       }
 
+      return [];
+    }
+
+    // キャッシュが空の場合（期限切れで削除された可能性）は再初期化
+    const stats = this.cacheManager.getCacheStats();
+    if (stats.factoryCount === 0 && !this.isInitializing) {
+      if (this.configurationManager.isDebugMode()) {
+        console.log("Cache is empty, triggering re-initialization");
+      }
+      this.cacheManager.setInitialized(false);
+      this.initializeFactoryFilesAsync();
       return [];
     }
 
