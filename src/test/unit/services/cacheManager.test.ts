@@ -264,7 +264,7 @@ suite("CacheManager Service Tests", () => {
   });
 
   suite("Cache Expiration", () => {
-    test("should expire cache entries after timeout", async () => {
+    test("should return stale cache entries after timeout (stale-while-revalidate)", async () => {
       const shortTimeoutCache = new CacheManager(100); // 100ms
       const factory = new Factory("user", testLocation);
 
@@ -274,7 +274,10 @@ suite("CacheManager Service Tests", () => {
       // 短い待機
       await new Promise((resolve) => setTimeout(resolve, 150));
 
-      assert.strictEqual(shortTimeoutCache.getFactory("user"), undefined);
+      // stale-while-revalidate: 期限切れでも値を返す
+      assert.ok(shortTimeoutCache.getFactory("user"));
+      // isFactoryCacheStale で期限切れかどうかを確認できる
+      assert.strictEqual(shortTimeoutCache.isFactoryCacheStale("user"), true);
     });
 
     test("should clean up expired entries", async () => {
