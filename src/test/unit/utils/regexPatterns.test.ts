@@ -10,6 +10,7 @@ import {
   getFactoryCallPattern,
   TRAIT_REFERENCE_PATTERN,
   VALID_FACTORY_NAME_PATTERN,
+  isCommentLine,
 } from "../../../utils/regexPatterns";
 
 suite("RegexPatterns Utility Tests", () => {
@@ -85,6 +86,30 @@ suite("RegexPatterns Utility Tests", () => {
 
       assert.ok(match);
       assert.strictEqual(match[1], "super_admin");
+    });
+
+    test("should match trait with curly brace block", () => {
+      const text = "trait :admin {";
+      const regex = new RegExp(
+        TRAIT_DEFINITION_PATTERN.source,
+        TRAIT_DEFINITION_PATTERN.flags
+      );
+      const match = regex.exec(text);
+
+      assert.ok(match);
+      assert.strictEqual(match[1], "admin");
+    });
+
+    test("should match trait with curly brace inline block", () => {
+      const text = "trait :compact { role { 'admin' } }";
+      const regex = new RegExp(
+        TRAIT_DEFINITION_PATTERN.source,
+        TRAIT_DEFINITION_PATTERN.flags
+      );
+      const match = regex.exec(text);
+
+      assert.ok(match);
+      assert.strictEqual(match[1], "compact");
     });
 
     test("should not match without colon", () => {
@@ -303,6 +328,43 @@ end`;
       assert.ok(match1);
       assert.ok(match2);
       assert.strictEqual(match1[2], match2[2]); // インデックスを修正
+    });
+  });
+
+  suite("isCommentLine", () => {
+    test("should detect simple comment line", () => {
+      const text = "# factory :user do";
+      assert.strictEqual(isCommentLine(text, text.indexOf("factory")), true);
+    });
+
+    test("should detect indented comment line", () => {
+      const text = "  # trait :admin do";
+      assert.strictEqual(isCommentLine(text, text.indexOf("trait")), true);
+    });
+
+    test("should not flag non-comment line", () => {
+      const text = "  factory :user do";
+      assert.strictEqual(isCommentLine(text, text.indexOf("factory")), false);
+    });
+
+    test("should not flag line without leading hash", () => {
+      const text = "factory :user do # comment after";
+      assert.strictEqual(isCommentLine(text, text.indexOf("factory")), false);
+    });
+
+    test("should handle multi-line text correctly", () => {
+      const text = "factory :user do\n  # trait :old do\n  trait :admin do";
+      const commentTraitIndex = text.indexOf("# trait") + 2; // position of 'trait' after '#'
+      assert.strictEqual(isCommentLine(text, commentTraitIndex), true);
+
+      const realTraitIndex = text.lastIndexOf("trait");
+      assert.strictEqual(isCommentLine(text, realTraitIndex), false);
+    });
+
+    test("should handle position at start of file", () => {
+      const text = "# factory :user do";
+      assert.strictEqual(isCommentLine(text, 0), false); // '#' itself is at position 0
+      assert.strictEqual(isCommentLine(text, 2), true); // 'factory' starts after '# '
     });
   });
 });
