@@ -10,6 +10,7 @@ import {
   FACTORY_DEFINITION_PATTERN,
   TRAIT_DEFINITION_PATTERN,
   FACTORY_BLOCK_PATTERN,
+  isCommentLine,
 } from "../utils/regexPatterns";
 import {
   ErrorNotificationService,
@@ -110,6 +111,11 @@ export class FactoryParser {
             continue; // ファクトリ名がない場合はスキップ
           }
 
+          // コメント行内のマッチをスキップ
+          if (isCommentLine(text, match.index)) {
+            continue;
+          }
+
           const factoryName = match[2];
 
           // 行番号を計算
@@ -164,6 +170,11 @@ export class FactoryParser {
 
       let factoryMatch;
       while ((factoryMatch = factoryBlockRegex.exec(text)) !== null) {
+        // コメント行内のファクトリブロックをスキップ
+        if (isCommentLine(text, factoryMatch.index)) {
+          continue;
+        }
+
         const factoryName = factoryMatch[1]; // インデックスを1に修正
         const factoryBlock = factoryMatch[2]; // インデックスを2に修正
         const factoryStartIndex = factoryMatch.index;
@@ -183,6 +194,12 @@ export class FactoryParser {
           const factoryHeaderLength = factoryMatch[0].indexOf(factoryMatch[2]);
           const traitIndex =
             factoryStartIndex + factoryHeaderLength + traitMatch.index;
+
+          // コメント行内のトレイト定義をスキップ
+          if (isCommentLine(text, traitIndex)) {
+            continue;
+          }
+
           const lineNumber = this.calculateLineNumber(text, traitIndex);
 
           // Location オブジェクトを作成
@@ -324,7 +341,13 @@ export class FactoryParser {
       FACTORY_DEFINITION_PATTERN.source,
       FACTORY_DEFINITION_PATTERN.flags
     );
-    return regex.test(text);
+    let match;
+    while ((match = regex.exec(text)) !== null) {
+      if (!isCommentLine(text, match.index)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /**
@@ -339,7 +362,9 @@ export class FactoryParser {
 
     let match;
     while ((match = regex.exec(text)) !== null) {
-      names.push(match[2]); // インデックスを修正
+      if (!isCommentLine(text, match.index)) {
+        names.push(match[2]); // インデックスを修正
+      }
     }
 
     return names;

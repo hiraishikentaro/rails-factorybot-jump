@@ -362,6 +362,95 @@ end`;
     });
   });
 
+  suite("Comment Filtering", () => {
+    test("should not parse commented-out factory definitions", () => {
+      const text = `# factory :old_user do
+#   name { 'Old' }
+# end
+
+factory :user do
+  name { 'John' }
+end`;
+
+      const result = factoryParser.parseText(text, testUri);
+      assert.strictEqual(result.factories.length, 1);
+      assert.strictEqual(result.factories[0].name, "user");
+    });
+
+    test("should not parse indented commented-out factory definitions", () => {
+      const text = `  # factory :old_user do
+  #   name { 'Old' }
+  # end
+
+  factory :user do
+    name { 'John' }
+  end`;
+
+      const result = factoryParser.parseText(text, testUri);
+      assert.strictEqual(result.factories.length, 1);
+      assert.strictEqual(result.factories[0].name, "user");
+    });
+
+    test("should not parse commented-out trait definitions", () => {
+      const text = `factory :user do
+  name { 'John' }
+
+  # trait :deprecated do
+  #   status { 'deprecated' }
+  # end
+
+  trait :admin do
+    role { 'admin' }
+  end
+end`;
+
+      const result = factoryParser.parseText(text, testUri);
+      assert.strictEqual(result.traits.length, 1);
+      assert.strictEqual(result.traits[0].name, "admin");
+    });
+
+    test("should not detect factory in comments via hasFactoryDefinition", () => {
+      const text = `# factory :old do
+# end`;
+      assert.strictEqual(factoryParser.hasFactoryDefinition(text), false);
+    });
+
+    test("should detect real factory even with commented factory present", () => {
+      const text = `# factory :old do
+# end
+factory :real do
+end`;
+      assert.strictEqual(factoryParser.hasFactoryDefinition(text), true);
+    });
+
+    test("should not extract factory names from comments", () => {
+      const text = `# factory :old do
+# end
+factory :real do
+end`;
+      const names = factoryParser.extractFactoryNames(text);
+      assert.strictEqual(names.length, 1);
+      assert.strictEqual(names[0], "real");
+    });
+  });
+
+  suite("Trait Curly Brace Block Syntax", () => {
+    test("should parse trait with curly brace block syntax", () => {
+      const text = `factory :user do
+  name { 'John' }
+
+  trait :admin {
+    role { 'admin' }
+  }
+end`;
+
+      const result = factoryParser.parseText(text, testUri);
+      assert.strictEqual(result.traits.length, 1);
+      assert.strictEqual(result.traits[0].name, "admin");
+      assert.strictEqual(result.traits[0].factoryName, "user");
+    });
+  });
+
   suite("Multiple File Processing", () => {
     test("should handle multiple files parsing", async () => {
       // parseTextメソッドを直接テストして、ファイル読み込みのモックを回避
