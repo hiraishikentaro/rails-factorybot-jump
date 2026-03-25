@@ -362,6 +362,47 @@ end`;
     });
   });
 
+  suite("ReDoS Resistance", () => {
+    test("should handle large factory files without performance issues", () => {
+      const lines: string[] = ["factory :large do"];
+      for (let i = 0; i < 1000; i++) {
+        lines.push(`  field_${i} { 'value_${i}' }`);
+      }
+      lines.push("  trait :special do");
+      lines.push("    role { 'special' }");
+      lines.push("  end");
+      lines.push("end");
+      const text = lines.join("\n");
+
+      const start = Date.now();
+      const result = factoryParser.parseText(text, testUri);
+      const elapsed = Date.now() - start;
+
+      assert.strictEqual(result.factories.length, 1);
+      assert.strictEqual(result.factories[0].name, "large");
+      assert.strictEqual(result.traits.length, 1);
+      assert.strictEqual(result.traits[0].name, "special");
+      assert.ok(elapsed < 200, `Should complete in <200ms, took ${elapsed}ms`);
+    });
+
+    test("should handle malformed input without hanging", () => {
+      // do が多いが end が少ない不正な入力
+      const lines: string[] = ["factory :broken do"];
+      for (let i = 0; i < 500; i++) {
+        lines.push(`  something do`);
+      }
+      const text = lines.join("\n");
+
+      const start = Date.now();
+      const result = factoryParser.parseText(text, testUri);
+      const elapsed = Date.now() - start;
+
+      // 結果の正確性は問わないが、フリーズしないことを確認
+      assert.ok(elapsed < 200, `Should complete in <200ms, took ${elapsed}ms`);
+      assert.ok(result);
+    });
+  });
+
   suite("Multiple File Processing", () => {
     test("should handle multiple files parsing", async () => {
       // parseTextメソッドを直接テストして、ファイル読み込みのモックを回避

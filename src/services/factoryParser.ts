@@ -9,7 +9,7 @@ import { Location } from "../models/location";
 import {
   FACTORY_DEFINITION_PATTERN,
   TRAIT_DEFINITION_PATTERN,
-  FACTORY_BLOCK_PATTERN,
+  extractFactoryBlocks,
 } from "../utils/regexPatterns";
 import {
   ErrorNotificationService,
@@ -156,18 +156,10 @@ export class FactoryParser {
     const traits: Trait[] = [];
 
     try {
-      // ファクトリブロック内のトレイトを検索
-      const factoryBlockRegex = new RegExp(
-        FACTORY_BLOCK_PATTERN.source,
-        FACTORY_BLOCK_PATTERN.flags
-      );
+      // ファクトリブロックを行単位パーサーで抽出（ReDoS安全）
+      const factoryBlocks = extractFactoryBlocks(text);
 
-      let factoryMatch;
-      while ((factoryMatch = factoryBlockRegex.exec(text)) !== null) {
-        const factoryName = factoryMatch[1]; // インデックスを1に修正
-        const factoryBlock = factoryMatch[2]; // インデックスを2に修正
-        const factoryStartIndex = factoryMatch.index;
-
+      for (const block of factoryBlocks) {
         // このファクトリブロック内のトレイトを検索
         const traitRegex = new RegExp(
           TRAIT_DEFINITION_PATTERN.source,
@@ -175,26 +167,23 @@ export class FactoryParser {
         );
 
         let traitMatch;
-        while ((traitMatch = traitRegex.exec(factoryBlock)) !== null) {
+        while ((traitMatch = traitRegex.exec(block.blockContent)) !== null) {
           const traitName = traitMatch[1];
 
           // 絶対位置を計算
-          // ファクトリブロック開始位置 + factoryMatch[0]の長さから実際のブロック開始を取得
-          const factoryHeaderLength = factoryMatch[0].indexOf(factoryMatch[2]);
-          const traitIndex =
-            factoryStartIndex + factoryHeaderLength + traitMatch.index;
+          const traitIndex = block.blockContentStart + traitMatch.index;
           const lineNumber = this.calculateLineNumber(text, traitIndex);
 
           // Location オブジェクトを作成
           const location = new Location(fileUri, lineNumber);
 
           // Trait オブジェクトを作成
-          const trait = new Trait(traitName, location, factoryName);
+          const trait = new Trait(traitName, location, block.factoryName);
           traits.push(trait);
         }
       }
     } catch (error) {
-      // 正規表現エラーの処理
+      // エラーの処理
       this.errorNotificationService.handleRegexError(
         TRAIT_DEFINITION_PATTERN.source,
         error as Error,

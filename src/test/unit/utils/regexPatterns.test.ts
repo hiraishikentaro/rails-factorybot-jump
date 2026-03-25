@@ -6,7 +6,7 @@ import * as assert from "assert";
 import {
   FACTORY_DEFINITION_PATTERN,
   TRAIT_DEFINITION_PATTERN,
-  FACTORY_BLOCK_PATTERN,
+  extractFactoryBlocks,
   getFactoryCallPattern,
   TRAIT_REFERENCE_PATTERN,
   VALID_FACTORY_NAME_PATTERN,
@@ -99,40 +99,81 @@ suite("RegexPatterns Utility Tests", () => {
     });
   });
 
-  suite("FACTORY_BLOCK_PATTERN", () => {
-    test("should match complete factory block", () => {
+  suite("extractFactoryBlocks", () => {
+    test("should extract complete factory block", () => {
       const text = `factory :user do
   name { 'John' }
   email { 'john@example.com' }
 end`;
-      const regex = new RegExp(
-        FACTORY_BLOCK_PATTERN.source,
-        FACTORY_BLOCK_PATTERN.flags
-      );
-      const match = regex.exec(text);
+      const blocks = extractFactoryBlocks(text);
 
-      assert.ok(match);
-      assert.strictEqual(match[1], "user"); // インデックスを1に修正
-      assert.ok(match[2].includes("name { 'John' }")); // インデックスを2に修正
+      assert.strictEqual(blocks.length, 1);
+      assert.strictEqual(blocks[0].factoryName, "user");
+      assert.ok(blocks[0].blockContent.includes("name { 'John' }"));
     });
 
-    test("should match factory block with traits", () => {
+    test("should extract factory block with traits", () => {
       const text = `factory :user do
   name { 'John' }
-  
+
   trait :admin do
     role { 'admin' }
   end
 end`;
-      const regex = new RegExp(
-        FACTORY_BLOCK_PATTERN.source,
-        FACTORY_BLOCK_PATTERN.flags
-      );
-      const match = regex.exec(text);
+      const blocks = extractFactoryBlocks(text);
 
-      assert.ok(match);
-      assert.strictEqual(match[1], "user"); // インデックスを1に修正
-      assert.ok(match[2].includes("trait :admin do")); // インデックスを2に修正
+      assert.strictEqual(blocks.length, 1);
+      assert.strictEqual(blocks[0].factoryName, "user");
+      assert.ok(blocks[0].blockContent.includes("trait :admin do"));
+    });
+
+    test("should extract multiple factory blocks", () => {
+      const text = `factory :user do
+  name { 'John' }
+end
+
+factory :post do
+  title { 'Test' }
+end`;
+      const blocks = extractFactoryBlocks(text);
+
+      assert.strictEqual(blocks.length, 2);
+      assert.strictEqual(blocks[0].factoryName, "user");
+      assert.strictEqual(blocks[1].factoryName, "post");
+    });
+
+    test("should provide correct blockContentStart offset", () => {
+      const text = `factory :user do
+  name { 'John' }
+
+  trait :admin do
+    role { 'admin' }
+  end
+end`;
+      const blocks = extractFactoryBlocks(text);
+
+      assert.strictEqual(blocks.length, 1);
+      // blockContentStart should point to the start of the line after "factory :user do"
+      const contentAtOffset = text.substring(blocks[0].blockContentStart);
+      assert.ok(contentAtOffset.startsWith("  name { 'John' }"));
+    });
+
+    test("should handle large input without performance issues (ReDoS resistance)", () => {
+      // 1000行のファクトリファイルを生成
+      const lines: string[] = ["factory :large_factory do"];
+      for (let i = 0; i < 1000; i++) {
+        lines.push(`  field_${i} { 'value_${i}' }`);
+      }
+      lines.push("end");
+      const text = lines.join("\n");
+
+      const start = Date.now();
+      const blocks = extractFactoryBlocks(text);
+      const elapsed = Date.now() - start;
+
+      assert.strictEqual(blocks.length, 1);
+      assert.strictEqual(blocks[0].factoryName, "large_factory");
+      assert.ok(elapsed < 100, `Should complete in <100ms, took ${elapsed}ms`);
     });
   });
 
